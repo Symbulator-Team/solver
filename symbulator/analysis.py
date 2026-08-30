@@ -1,6 +1,6 @@
 """
 High-level API mirroring the TI programs `dc()` and `ac()`: parse a
-circuit description, solve it, and also compute the "3rd-level" derived
+circuit description, solve it, and also compute the third-level derived
 quantities (branch voltage, power, impedance) that Symbulator computes
 after solving -- ported from the tail of `symbv8s6`.
 """
@@ -174,11 +174,18 @@ def _seen_impedance(vdiff: sp.Expr, i: sp.Expr):
 
 def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
              use_rms: bool = False) -> Dict[str, sp.Expr]:
-    """Compute the "3rd-level" quantities the calculator derived *after*
-    solving the KCL system: branch voltage (v_<name>), power (p_<name> in
-    dc, or apparent/complex power s_<name> plus real average power in ac),
-    and -- for sources only -- the impedance/resistance the source sees
-    looking into the rest of the circuit (z_<name> / r_<name>). These are
+    """Compute the third-level quantities, derived *after* the KCL system
+    is solved: branch voltage (v_<name>), power (p_<name> in dc, or
+    apparent/complex power s_<name> plus real average power in ac), and
+    -- for sources only -- the impedance/resistance the source sees
+    looking into the rest of the circuit (z_<name> / r_<name>).
+
+    "Third level" here is this port's classification, which the monograph
+    follows: whatever is derived in this round. The 2000 thesis counts
+    only the powers as third level and keeps the voltage drop as a
+    second-level standing expression (§4.2.4); the drop is computed here
+    instead, so it is third level by the rule this code uses. The seen
+    resistance the thesis never classifies at all. These are
     plain algebra on the already-solved node voltages and branch currents,
     not part of the KCL system itself, so they're computed in one pass
     here rather than inside the solver in engine.py."""
@@ -243,7 +250,7 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
                                   equations=equations, unknowns=unknowns,
                                   conditions=conditions, suffix=suffix)
     if domain in ("dc", "ac"):
-        # Matches the original: the power/impedance "3rd-level" derived
+        # Matches the original: the power/impedance third-level derived
         # quantities are only computed for dc/ac, not for fd (s-domain).
         for solution in solutions:
             solution.update(_derived(elements, domain, solution, use_rms=use_rms))

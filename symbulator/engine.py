@@ -7,7 +7,11 @@ The original TI-Basic code split unknowns into a "1st level" (solved
 simultaneously via `solve`/`cSolve`) and a "2nd level" (computed by
 direct substitution afterwards) purely as a performance optimization on
 calculator hardware. This port always solves everything simultaneously
-via `sympy.solve`. The physics and the results are identical either way;
+via `sympy.solve`. So a resistor's current, second level on the
+calculator, is a first-level unknown here -- one of the two places this
+port's classification departs from the 2000 thesis's census (the other
+is the voltage drop; see `analysis._derived`). The monograph's §4.3
+records both departures. The physics and the results are identical either way;
 we trade a bit of solver efficiency for a much smaller, easier-to-verify
 implementation. Two exceptions are kept as direct substitutions because
 they are always locally computable and keeping them explicit avoids
@@ -1061,8 +1065,10 @@ def _filter_solutions(results, filters):
 def _expand_solution(circuit: "Circuit", sol: Dict[sp.Symbol, sp.Expr]) -> Dict[str, sp.Expr]:
     """Turn one raw SymPy solution into the full {name: value} dict."""
     result = {str(k): sp.simplify(v) for k, v in sol.items()}
-    # "Third-level" quantities in `circuit.known` (a capacitor's
-    # current, an op-amp's output current, and the like) are stamped
+    # Second-level quantities in `circuit.known` (a capacitor's
+    # current and a current source's -- the only two kinds that go in
+    # there; an op-amp's output current is *solved*, not substituted,
+    # and this comment used to say otherwise) are stamped
     # in terms of the node-voltage symbols `Circuit.v()` hands out
     # *before* the system is solved -- so without this substitution
     # they'd carry raw unknowns like v_3 straight into the answer,
