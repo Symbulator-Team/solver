@@ -1,5 +1,113 @@
 # Changelog
 
+## 0.5.26 -- 1 Sep 2026
+
+### Changed
+- **The three passive symbols redrawn (#218).** Roberto's brief, from
+  reference images, settled one parameter at a time against rendered
+  strips rather than described in prose.
+
+  **The resistor's peaks are rounded, not pointed.** Each corner becomes
+  a quadratic whose control point is the old vertex, leaving the
+  straight run `ZIG_ROUND` back along one arm and rejoining it the same
+  distance along the next. A quadratic leaves its first control point
+  along the line to the second, so the curve is tangent to both arms:
+  no join to see, one continuous stroke that never comes to a point.
+  `stroke-linejoin="round"` was the cheap alternative and is not the
+  same thing -- its radius is fixed at half a stroke, 0.85px, which is
+  the blob #212 rejected.
+
+  Rounding a corner cuts it off, so the **drawn** peak is 6.51px against
+  the 7.20 amplitude. That is the number a label must clear, so `REACH`
+  is built from it and not from the amplitude: the resistor's labels sit
+  2px closer than they did (9.37 -> 7.36). The size did not change --
+  a 10% reduction was tried, measured clean, and then withdrawn.
+
+  **The inductor is one line that loops** -- a projected helix, drawn as
+  a prolate trochoid `x = A*t - B*sin t`, `y = -H*cos t`, emitted as
+  cubic Beziers fitted to the analytic derivative. It loops exactly when
+  `B > A`, because that is when `dx/dt` changes sign and the line
+  doubles back; at `B == A` it is a sine wave with no crossings, a
+  different symbol entirely. `IND_RATIO` is that ratio and the only
+  number that decides it.
+
+  Two other shapes were built and measured first, and both are recorded
+  in the docstring so nobody rebuilds them. Arcs between two points on
+  a line **cannot** cross their own chord: the large-arc flag takes the
+  major arc, over the top, and the far side of the circle lies on the
+  minor arc -- every lifted variant measured 0.00 below the leads. A row
+  of whole ellipses does cross but reads as separate rings, not one
+  wire.
+
+  The span carries an extra half turn so one end dives into a loop and
+  the other rises out of an arch, which is what the references show;
+  `IND_PHASE` alone decides which end is which. The height is unchanged
+  at 11.0, so the coil's vertical footprint and every label placed from
+  it stay exactly where they were.
+
+  **The capacitor keeps its two straight plates.** A bowed plate was
+  built and drawn for a few hours and then withdrawn, on the reason
+  rather than the look: a curved plate conventionally marks a
+  *polarised* capacitor, and Symbulator's are not -- `c1,2,0,1'u` has no
+  + end and the engine never treats one terminal differently from the
+  other. It is a good-looking symbol for a different part. There is a
+  test on the plates being straight, so it cannot drift back by
+  accident.
+
+  **The transformer has a symbol of its own**: two windings facing a
+  core, with the polarity dots and the turns ratio. Four terminals, its
+  lower pair on the rail -- not a stylistic choice, since
+  `engine._stamp_t` reads both winding voltages against ground. The
+  dots are not decoration either: turn counts of opposite sign mean
+  opposite polarity, so the secondary's dot moves to the foot of its
+  winding and the ratio is printed as magnitudes -- `t,2,3,1,-2` draws
+  as `1 : 2` with the dots opposed. The reversal is said by the dots
+  *or* by the sign and never by both: the engine sets
+  `v(n1)/turns1 = v(n2)/turns2`, so printing the sign as well makes a
+  reader apply the reversal twice and read AS7's Example 13.8 as `+2`.
+  This shipped as a double count for a few hours until Roberto asked
+  whether the inversion was deliberate. `-1,-2` matters as much as
+  `1,-2`: two negatives are the same polarity and read like `1,2`, and
+  a symbolic `1 : n` has no sign to read, so its dots stay level and it
+  prints as typed. The primary
+  is mirrored about its own axis so the pair face each other. Two core
+  bars rather than one, because a single line at this stroke reads as a
+  wire joining the windings, which is what an ideal transformer has not
+  got.
+
+  **The two-port is a block, not an element in a branch.** It was a
+  labelled box in line between its two nodes, which implied a single
+  series current -- and the element does not carry one: its two port
+  currents differ, the difference going to ground. It is now a square
+  block with a terminal at each of its four corners, the upper pair on
+  the node row and the lower pair on the rail, because
+  `engine._stamp_two_port` reads `v1 = v(n1)` and `v2 = v(n2)`, both
+  against ground. Its four parameters are written inside it, where
+  nothing else on the drawing said what a `z` or an `h` block actually
+  does; a reader had to go back to the description for
+  `[40,20j,30j,50]` and remember that the order is 11, 12, 21, 22.
+
+  Its height is `ROW_H + 2*PORT_BOX_OVER`, not a literal: the lower
+  terminals sit the overhang above the bottom edge, so only that value
+  puts them exactly on the rail and lets the lower leads run out with
+  no bend. Written as the sum, it stays bend-free if either the band or
+  the overhang ever moves. The block also takes a spacer column, since
+  at its full width its left face landed on the neighbouring source's
+  value label.
+
+  **One ground symbol per run of rail.** A block that grounds itself
+  says so in the middle of its own gap, which is nearer to what the
+  reader is looking at than the far-left end of the drawing, and the
+  rail's own symbol is dropped rather than drawn twice on one line. A
+  two-port gets two symbols not by exception but because it cuts the
+  rail in two and each half is a run of its own. The node's name moved
+  from beside the bars to under them: beside them it had to know which
+  side it had room on -- a symbol set left of a block has the box hard
+  against it -- and underneath there is never anything to collide with.
+
+  335 tests and `review_schematics.py` clean over all 330 examples,
+  with the exhaustive pixel sweep re-run on the final geometry.
+
 ## 0.5.25 -- 1 Sep 2026
 
 ### Added

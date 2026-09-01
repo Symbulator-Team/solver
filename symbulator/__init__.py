@@ -46,7 +46,7 @@ from .spice import to_spice, from_spice
 
 #: The single source of truth for the version: pyproject.toml reads this
 #: attribute at build time, so the two cannot disagree.
-__version__ = "0.5.25"
+__version__ = "0.5.26"
 
 __all__ = ["dc", "ac", "fd", "tr", "t2s", "s2t", "t", "s", "pr", "pf", "gain", "th", "er", "port", "ex",
            "time_samples", "bode_samples", "PlotError",

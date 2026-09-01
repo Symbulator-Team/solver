@@ -18,7 +18,7 @@ import re
 
 import pytest
 
-from symbulator.schematic import to_svg, draw, _split_name
+from symbulator.schematic import to_svg, draw, _split_name, MARGIN, ROW_H
 from symbulator.elements import CircuitError
 
 
@@ -84,10 +84,17 @@ def test_each_element_type_draws_and_is_labelled(desc, name):
 
 
 def test_two_port_blocks_draw_as_labelled_boxes():
-    """A documented limitation: they render, without port parameters."""
+    """A documented limitation: they render as a box in line between
+    their two nodes, without their port parameters.
+
+    Richer symbols were built on 1 Sep 2026 -- four terminals with the
+    lower pair on the rail, which is what `engine._stamp_two_port`
+    models -- and withdrawn as clutter. What the box cannot say is that
+    the two port currents differ, the difference going to ground; the
+    answers say it instead."""
     svg = to_svg("e1,1,0,5:z1,1,2:r1,2,0,50")
     assert shown("z1") in " ".join(texts(svg))
-
+    assert "<rect" in svg
 
 # --- things the engine decides, not the drawing ------------------------
 
@@ -378,16 +385,42 @@ def test_subscripts_are_smaller_than_the_name_they_hang_off():
     assert ".sub{font-size:" in to_svg(DIVIDER)
 
 
-def test_inductor_turns_are_loops_not_humps():
-    """A textbook coil is a row of loops -- a cursive `l` repeated --
-    which in SVG means each turn is an arc of more than 180 degrees
-    (large-arc-flag 1) across a chord shorter than its own diameter.
-    The large-arc flag with a chord of exactly 2r is the hump."""
-    from symbulator.schematic import IND_LOOPS, IND_R, IND_STEP
-    assert 2 * IND_R > IND_STEP, "chord too long for the arc to loop"
+def test_inductor_is_one_line_that_loops():
+    """The coil is a projected helix: a single continuous curve that
+    crosses itself (Roberto, 1 Sep 2026). What makes it a coil rather
+    than a wave is that the line *doubles back* -- and that is tested
+    on the emitted path, by walking the curve and finding the places
+    where x goes backwards, not by trusting the constant that should
+    cause it.
+
+    `IND_RATIO > 1` is the condition: it is B/A in
+    x(t) = A*t - B*sin(t), so dx/dt = A - B*cos(t) changes sign exactly
+    when B exceeds A. At 1 the curve is a sine wave with no crossings,
+    which is a different symbol entirely."""
+    from symbulator.schematic import IND_RATIO, IND_TURNS
+    assert IND_RATIO > 1, "at or below 1 the coil is a wave, not a coil"
     svg = to_svg("e1,1,0,5:l1,1,2,1e-3:r1,2,0,10")
-    turn = "a{0:g} {0:g} 0 1 1 {1:g} 0".format(IND_R, IND_STEP)
-    assert svg.count(turn) == IND_LOOPS
+    pts = [(float(m[4]), float(m[5])) for m in re.findall(
+        r"C([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)", svg)]
+    assert pts, "the coil emitted no curve segments"
+    xs = [p[0] for p in pts]
+    backwards = sum(1 for i in range(1, len(xs)) if xs[i] < xs[i - 1])
+    assert backwards >= IND_TURNS, (
+        "the line never doubles back, so it is not looping: %d reversals "
+        "over %d turns" % (backwards, IND_TURNS))
+
+
+def test_the_capacitor_plates_are_straight():
+    """A curved plate marks a *polarised* capacitor, and Symbulator's are
+    not: `c1,2,0,1'u` has no + end and the engine never treats one
+    terminal differently from the other. One was drawn for a few hours
+    on 1 Sep 2026 and taken back out; this is the guard on it coming
+    back by accident."""
+    from symbulator.schematic import _body_c
+    body = _body_c(132)
+    assert "A" not in body, "a plate is curved: " + body
+    for x in (60.5, 71.5):
+        assert "M%g -13 L%g 13" % (x, x) in body, body
 
 
 def test_a_controlled_source_is_a_diamond_and_an_independent_one_a_circle():
@@ -668,3 +701,30 @@ def test_pi_is_printed_as_the_letter():
     assert "30\u00b0" in "".join(
         texts(to_svg("j,0,2,10e^(-t)*sin(2t+30*pi/180):r1,2,0,5")))
     assert "pin" in texts(to_svg("e1,1,0,10:r1,1,0,pin"))
+
+
+def test_a_reversed_transformer_says_it_once():
+    """A reversed winding is said by the dots *or* by the sign, never
+    both (Roberto, 1 Sep 2026). The drawing says it with the dots and
+    prints the ratio as magnitudes, which is how the books set it.
+
+    They are alternative notations, not complementary ones. The engine
+    sets v(n1)/turns1 = v(n2)/turns2, so a negative turn count already
+    says the secondary is inverted; move the dot as well and a reader
+    applies the reversal twice and reads AS7's Example 13.8 as `+2`.
+    `-1,-2` matters as much as `1,-2`: two negatives are the *same*
+    polarity and must read exactly like `1,2`."""
+    y_bot = MARGIN + ROW_H
+    cases = [("t,2,3,1,-2:r2,3,4,z2:e2,4,0,vs2", "1 : 2", 2),
+             ("t,2,3,1,2:r2,3,4,z2:e2,4,0,vs2", "1 : 2", 1),
+             ("t,2,3,-1,-2:r2,3,4,z2:e2,4,0,vs2", "1 : 2", 1),
+             # nothing says which way an unknown n runs, so it is
+             # printed as typed and the dots stay level
+             ("t,2,3,1,n:r2,3,4,z2:e2,4,0,vs2", "1 : n", 1)]
+    for desc, ratio, levels in cases:
+        svg = to_svg(desc)
+        assert ratio in texts(svg), (desc, texts(svg))
+        dots = re.findall(
+            r'<circle cx="[-\d.]+" cy="([-\d.]+)" r="3.4"', svg)
+        heights = {round(float(y)) for y in dots if round(float(y)) != y_bot}
+        assert len(heights) == levels, (desc, sorted(heights))

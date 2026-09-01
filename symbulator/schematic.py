@@ -53,7 +53,8 @@ import math
 import re
 from typing import Dict, List, Optional, Tuple
 
-from .elements import Element, parse_circuit
+from . import messages as M
+from .elements import Element, CircuitError, parse_circuit
 
 __all__ = ["to_svg", "draw"]
 
@@ -64,6 +65,12 @@ __all__ = ["to_svg", "draw"]
 # labelled rectangle, so an unrecognised kind still draws something
 # honest.
 TWO_TERMINAL = frozenset("rlcejs")
+
+# The two-port parameter families. They take two node names and ground
+# their other two terminals themselves, so they are drawn as a block
+# filling the band between the node row and the rail rather than as an
+# element in a branch -- see `_draw_port_box`.
+PORT_BLOCK = frozenset("zyhgab")
 
 _UNIT = {"r": "Ω", "l": "H", "c": "F", "e": "V", "j": "A",
          "m": "H"}
@@ -168,10 +175,54 @@ R_SCALE = 0.8      # the resistor, against the other bodies' BODY
 DEP_SCALE = 1.1    # the dependent source's diamond, against SRC_R
 R_BODY = BODY * R_SCALE
 DEP_R = SRC_R * DEP_SCALE
-IND_LOOPS = 4
-IND_STEP = BODY / IND_LOOPS                      # 11.5
-IND_R = 7.0
-IND_REACH = IND_R + (IND_R ** 2 - (IND_STEP / 2.0) ** 2) ** 0.5
+# The coil: a projected helix, drawn as one line that loops (see
+# `_body_l`). IND_RATIO is B/A, and it is the only number that decides
+# whether the line crosses itself -- above 1 it loops, at 1 it is a sine
+# wave, below 1 a ripple. IND_H is kept at the height the old four-arc
+# coil reached, 10.99, so the symbol's vertical footprint and every
+# label placed from it stay exactly where they were.
+IND_TURNS = 3
+IND_RATIO = 2.6
+IND_H = 11.0
+IND_SEGMENTS = 8          # cubic Beziers per turn; the fit is analytic
+IND_REACH = IND_H
+# Where the curve starts, and how far it runs. Both ends land on y = 0
+# whatever the phase, so the leads always meet it level -- what the
+# phase decides is which end gets the extra half turn's arch. At +pi/2
+# the curve dives into a loop at the near end and rises out of an arch
+# at the far one; at -pi/2 it is the mirror image. Roberto wanted the
+# arch at the far end (1 Sep 2026), which is +pi/2.
+IND_PHASE = math.pi / 2.0
+_IND_SPAN = 2.0 * math.pi * IND_TURNS + math.pi
+
+# The drawn span is a half turn longer than the turns alone, and the B
+# term moves the two ends relative to each other, so the advance that
+# puts the lead attachment points exactly BODY apart is not BODY over
+# the turns. Solving x(t1) - x(t0) = BODY for A:
+_IND_SIN_DIFF = math.sin(IND_PHASE + _IND_SPAN) - math.sin(IND_PHASE)
+
+
+def _ind_advance() -> float:
+    return BODY / (_IND_SPAN - IND_RATIO * _IND_SIN_DIFF)
+
+
+def _ind_overhang() -> float:
+    """How far the loops reach past the lead attachment points.
+
+    The curve doubles back, so its extreme x is not at an endpoint: the
+    stationary points are where cos t = A/B, and past them the line has
+    already swung outside the span its ends define. Scanned rather than
+    solved -- it is a handful of microseconds once, and a closed form
+    here would have to know which stationary point is the outermost."""
+    a = _ind_advance()
+    b = IND_RATIO * a
+    xs = [a * (IND_PHASE + _IND_SPAN * k / 400.0)
+          - b * math.sin(IND_PHASE + _IND_SPAN * k / 400.0)
+          for k in range(401)]
+    return max(xs[0] - min(xs), max(xs) - xs[-1], 0.0)
+
+
+IND_OVERHANG = _ind_overhang()
 
 # How far each symbol's **ink** reaches either side of its own axis.
 # Labels are placed from this rather than from one number for every
@@ -180,19 +231,38 @@ IND_REACH = IND_R + (IND_R ** 2 - (IND_STEP / 2.0) ** 2) ** 0.5
 # that clears the shallowest runs through the tallest.
 #
 # Ink, not path. Each number below starts as a *centreline* distance,
-# and the stroke puts another half-width outside it -- the resistor far
-# more than that, because a mitred peak runs past its own vertex by
-# half the stroke over the sine of half the vertex angle, 2.2px here.
-# Measured against rendered pixels, a label the path geometry called
-# 3px clear of the zigzag was 1px clear of its ink, which is what a
-# reader sees as touching. `tools/pixel_clearance.py` is that
-# measurement, kept.
+# and the stroke puts another half-width outside it. The resistor used
+# to reach much further than that: its peaks were mitred to a point, and
+# a mitre runs past its own vertex by half the stroke over the sine of
+# half the vertex angle -- 2.2px here. Measured against rendered pixels,
+# a label the path geometry called 3px clear of the zigzag was 1px clear
+# of its ink, which is what a reader sees as touching.
+# `tools/pixel_clearance.py` is that measurement, kept.
 STROKE = 1.7                 # the drawing's stroke-width
 _HALF = STROKE / 2.0
 ZIG_AMP = 9.0 * R_SCALE      # the zigzag's half-height, centreline
-_ZIG_MITRE = _HALF / math.sin(math.atan2(R_BODY / 12.0, ZIG_AMP))
 
-REACH = {"r": ZIG_AMP + _ZIG_MITRE,
+# The peaks are rounded rather than pointed (Roberto, 1 Sep 2026). Each
+# corner becomes a quadratic whose control point is the old vertex,
+# starting ZIG_ROUND back along each arm -- so the curve leaves and
+# rejoins the straight run along its own direction and there is no join
+# to see. `stroke-linejoin="round"` was the cheap alternative and is not
+# the same thing: its radius is fixed at half a stroke, 0.85px, which is
+# the blob #212 rejected.
+#
+# **Rounding a corner cuts it off**, so the drawn peak is lower than the
+# amplitude the geometry asks for: 6.51px against 7.20. That is the
+# number a label has to clear, so it -- not ZIG_AMP -- is what REACH is
+# built from, and the resistor's labels sit 2px closer than they did.
+ZIG_ROUND = 1.5
+
+_ZIG_ARM = math.hypot(R_BODY / 6.0, 2.0 * ZIG_AMP)   # peak to peak
+_ZIG_CUT = min(ZIG_ROUND, _ZIG_ARM / 2.0)
+# The quadratic's midpoint, for a symmetric interior peak: with the ends
+# a fraction c = cut/arm along each arm, it lands at amp * (1 - c).
+ZIG_PEAK = ZIG_AMP * (1.0 - _ZIG_CUT / _ZIG_ARM)
+
+REACH = {"r": ZIG_PEAK + _HALF,
          "l": IND_REACH + _HALF,
          "c": 13.0 + _HALF,
          "e": SRC_R + _HALF, "j": SRC_R + _HALF,
@@ -666,19 +736,49 @@ class _Canvas:
 # on the enclosing group.
 
 def _body_r(length: float) -> str:
+    """Six segments -- three full cycles -- with every corner rounded.
+
+    A corner becomes a quadratic whose control point is the corner
+    itself, leaving the straight run ZIG_ROUND back along one arm and
+    rejoining it ZIG_ROUND along the next. Because a quadratic leaves
+    its first control point along the line to the second, the curve is
+    tangent to both arms and there is no join to see: the whole zigzag
+    is one continuous stroke that never comes to a point.
+
+    The cut is clamped to half the shorter arm, which matters at the two
+    ends, where a long lead meets a half-length first arm -- an
+    unclamped cut would run the curve past the corner it is rounding."""
     lead = (length - R_BODY) / 2.0
     step, amp = R_BODY / 6.0, ZIG_AMP
-    d = ["M0 0 L{0:g} 0".format(lead)]
+    pts = [(0.0, 0.0), (lead, 0.0)]
     for i in range(6):
-        d.append("L{0:g} {1:g}".format(lead + step * (i + 0.5),
-                                       amp if i % 2 == 0 else -amp))
-    d.append("L{0:g} 0 L{1:g} 0".format(lead + R_BODY, length))
-    # Mitred, not the page's global round join: a textbook zigzag comes
-    # to a point, and at this size a rounded peak reads as a blob.
-    return '<path d="{0}" stroke-linejoin="miter"/>'.format(" ".join(d))
+        pts.append((lead + step * (i + 0.5), amp if i % 2 == 0 else -amp))
+    pts += [(lead + R_BODY, 0.0), (length, 0.0)]
+
+    d = ["M0 0"]
+    for i in range(1, len(pts) - 1):
+        (ax, ay), (vx, vy), (bx, by) = pts[i - 1], pts[i], pts[i + 1]
+        la = math.hypot(ax - vx, ay - vy)
+        lb = math.hypot(bx - vx, by - vy)
+        cut = min(ZIG_ROUND, la / 2.0, lb / 2.0)
+        d.append("L{0:g} {1:g}".format(vx + (ax - vx) / la * cut,
+                                       vy + (ay - vy) / la * cut))
+        d.append("Q{0:g} {1:g} {2:g} {3:g}".format(
+            vx, vy, vx + (bx - vx) / lb * cut, vy + (by - vy) / lb * cut))
+    d.append("L{0:g} {1:g}".format(*pts[-1]))
+    return '<path d="{0}"/>'.format(" ".join(d))
 
 
 def _body_c(length: float) -> str:
+    """Two straight plates.
+
+    A bowed plate was drawn for a few hours on 1 Sep 2026 and taken back
+    out the same day, and the reason is worth keeping: **a curved plate
+    conventionally marks a polarised capacitor**, and Symbulator's are
+    not polarised -- `c1,2,0,1'u` has no + end and the engine never
+    treats one terminal differently from the other. Drawn on every
+    capacitor the curve says something about the component that is not
+    true. It is a nice-looking symbol for a different part."""
     mid, gap, h = length / 2.0, 5.5, 13.0
     return ('<path d="M0 0 L{0:g} 0 M{1:g} 0 L{2:g} 0"/>'
             '<path d="M{0:g} {3:g} L{0:g} {4:g}"/>'
@@ -687,25 +787,66 @@ def _body_c(length: float) -> str:
 
 
 def _body_l(length: float) -> str:
-    """A coil of four loops -- the way Sadiku's Fig. 6.23 and
-    Boylestad's chapter mark draw one, and what circuitikz calls an
-    `american inductor`.
+    """A coil drawn as one line that loops -- a projected helix
+    (Roberto, 1 Sep 2026).
 
-    The loop is the whole point (#212). Each turn is an arc of *more*
-    than a semicircle (large-arc-flag 1) across a chord shorter than
-    its own diameter, so it closes back past where it started and the
-    turns overlap: a written cursive `l`, repeated. The obvious
-    `a r r 0 0 1 2r 0` -- an exact semicircle over a chord of 2r, which
-    is what this used to draw -- gives a row of separate humps instead,
-    a cursive `m`, which no book uses for a plain inductor.
+    Not a row of arcs and not a set of ellipses: a single continuous
+    curve that crosses itself, which is what a coil seen slightly off
+    its own axis actually looks like. The curve is a prolate trochoid,
 
-    2*LOOP_R > LOOP_STEP is therefore not a nicety but the condition
-    for the arc to exist at all: at a chord of exactly 2r the two
-    arcs coincide and the flag stops meaning anything."""
-    lead = (length - BODY) / 2.0
-    d = ["M0 0 L{0:g} 0".format(lead)]
-    for _ in range(IND_LOOPS):
-        d.append("a{0:g} {0:g} 0 1 1 {1:g} 0".format(IND_R, IND_STEP))
+        x(t) = A*t - B*sin(t)      advance A per radian, loop reach B
+        y(t) = -IND_H*cos(t)       loop half-height
+
+    and it loops exactly when B > A, because that is when dx/dt =
+    A - B*cos(t) changes sign and the line doubles back on itself.
+    B == A is a plain sine wave with no crossings at all, B < A a gentle
+    ripple -- so IND_RATIO alone decides whether this reads as a spring
+    or as a wave, and it is the number to move.
+
+    Two shapes were tried and measured before this one. Arcs between two
+    points on a line cannot do it: with both ends on the same line the
+    large-arc flag takes the *major* arc, over the top, and the far side
+    of the circle lies on the minor arc, so a turn can never cross its
+    own chord -- every lifted variant measured 0.00 below the leads. A
+    row of whole ellipses does cross, but reads as separate rings, not
+    as one wire.
+
+    Emitted as cubic Beziers fitted to the analytic derivative (Hermite
+    segments converted to Bezier control points), so a few segments per
+    turn are exact rather than merely close.
+
+    **The half turn is what makes the ends read right.** Over a whole
+    number of turns both ends leave in the same direction; the extra pi
+    gives the coil one end that dives straight into a loop and one that
+    rises out of an arch, which is what Roberto's references show. Which
+    end gets which is `IND_PHASE` and nothing else -- both land on
+    y = 0 either way, so the leads meet the curve level whichever it
+    is."""
+    a = _ind_advance()
+    b = IND_RATIO * a
+    t0 = IND_PHASE
+    span = _IND_SPAN
+
+    def at(t):
+        return (a * t - b * math.sin(t), -IND_H * math.cos(t))
+
+    def deriv(t):
+        return (a - b * math.cos(t), IND_H * math.sin(t))
+
+    shift = (length - BODY) / 2.0 - at(t0)[0]
+    # Per *turn*, so the half turn gets its share too -- counting whole
+    # turns would quietly thin the fit by an eighth.
+    n = max(int(round(IND_SEGMENTS * span / (2.0 * math.pi))), 2)
+    x0, y0 = at(t0)
+    d = ["M0 0 L{0:g} 0".format(x0 + shift)]
+    for i in range(n):
+        u0, u1 = t0 + span * i / n, t0 + span * (i + 1) / n
+        h = (u1 - u0) / 3.0
+        (px, py), (qx, qy) = at(u0), at(u1)
+        (dx0, dy0), (dx1, dy1) = deriv(u0), deriv(u1)
+        d.append("C{0:g} {1:g} {2:g} {3:g} {4:g} {5:g}".format(
+            px + shift + dx0 * h, py + dy0 * h,
+            qx + shift - dx1 * h, qy - dy1 * h, qx + shift, qy))
     d.append("L{0:g} 0".format(length))
     return '<path d="{0}"/>'.format(" ".join(d))
 
@@ -791,6 +932,12 @@ def _body_extent(kind: str, length: float,
         return mid - 7.0, mid + 7.0        # the two plates and their gap
     if kind == "r":
         return mid - R_BODY / 2.0, mid + R_BODY / 2.0
+    if kind == "l":
+        # The coil's loops swing past the points its leads attach at, so
+        # its ink is wider than its span. Reporting the span alone would
+        # let a label sit on the outermost loop.
+        half = BODY / 2.0 + IND_OVERHANG
+        return mid - half, mid + half
     return mid - BODY / 2.0, mid + BODY / 2.0
 
 
@@ -1051,6 +1198,207 @@ def _reference_marks(cv: _Canvas, e: Element, x1: float, y1: float,
         cv.runs(cx - edge, cy + 4.5, _i_runs(e.name), "end")
     else:
         cv.runs(cx, cy + edge + LABEL_ASCENT, _i_runs(e.name))
+
+
+PORT_BOX_W = 150.0    # the block's width, and its height. The height is
+                      # not free: the lower terminals sit PORT_BOX_OVER
+                      # above the bottom edge, so for them to land *on*
+                      # the rail -- and the lower leads to run straight
+                      # out with no bend -- the box has to be the band
+                      # plus twice the overhang. ROW_H + 2*12 = 174.
+                      # A taller box drops them below the rail and the
+                      # bend comes back the other way.
+PORT_BOX_H = ROW_H + 2 * 12.0
+PORT_BOX_OVER = 12.0  # how far its top and bottom edges stand past the
+                      # lines that enter it, so the terminals meet the
+                      # left and right faces rather than the corners
+PORT_BOX_LINE = 17.0  # line spacing for the name and parameters inside
+PORT_BOX_MARK = 30.0  # and how far past the box each ground symbol sits:
+                      # clear of the lower edge the box overhangs by, and
+                      # far enough that the node's name still fits to the
+                      # right of the bars, where every other one is
+
+
+def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
+                   y_top: float, y_bot: float) -> List[float]:
+    """A two-port block: one box filling the band between the node row
+    and the ground rail, with a terminal at each of its four corners.
+
+    Not an element in a branch. The reader names two nodes and the other
+    two terminals are ground, so the block has a port either side and
+    they share a return: `engine._stamp_two_port` reads `v1 = v(n1)` and
+    `v2 = v(n2)`, both against ground. Drawn in line between two nodes it
+    implied a single series current, which the element does not carry --
+    in AS7's Example 13.8 the two port currents differ by the turns
+    ratio, the difference going to ground.
+
+    The box is **shorter than the band**, so it stops above the rail and
+    its two lower terminals run out sideways and then down to it. All
+    four terminals meet the left and right faces, inset from the corners
+    by the overhang. Returns the x positions those lower leads put on
+    the rail."""
+    mid = (xa + xb) / 2.0
+    bx0, bx1 = mid - PORT_BOX_W / 2.0, mid + PORT_BOX_W / 2.0
+    by0 = y_top - PORT_BOX_OVER
+    by1 = by0 + PORT_BOX_H
+    low = by1 - PORT_BOX_OVER          # the lower terminals' own line
+    cv.raw('<rect x="{0:g}" y="{1:g}" width="{2:g}" height="{3:g}" '
+           'fill="none"/>'.format(bx0, by0, PORT_BOX_W, PORT_BOX_H),
+           (bx0, by0), (bx1, by1))
+    # The ink is the outline, not the area: the rect is `fill="none"`,
+    # and its inside is the one piece of clear space on the drawing --
+    # which is where the name goes. Registering the filled area instead
+    # made the harness report the block's own name as sitting on it.
+    h = _HALF
+    cv.ink(bx0 - h, by0 - h, bx1 + h, by0 + h)          # top edge
+    cv.ink(bx0 - h, by1 - h, bx1 + h, by1 + h)          # bottom
+    cv.ink(bx0 - h, by0 - h, bx0 + h, by1 + h)          # left
+    cv.ink(bx1 - h, by0 - h, bx1 + h, by1 + h)          # right
+    cv.wire(min(xa, bx0), y_top, bx0, y_top)
+    cv.wire(bx1, y_top, max(xb, bx1), y_top)
+    # ...and the lower pair, out of the faces to the rail. Each stops
+    # halfway between the block's face and the column its own upper lead
+    # came from -- which is where the rail bends up into whatever is
+    # there. A fixed offset put the symbol hard against the box on a
+    # tight drawing and adrift on a wide one; the midpoint is the same
+    # gap on both sides however far apart the columns fall.
+    legs = []
+    for x, node_x in ((bx0, min(xa, bx0)), (bx1, max(xb, bx1))):
+        out = (x + node_x) / 2.0
+        cv.wire(min(x, out), low, max(x, out), low)
+        cv.wire(out, low, out, y_bot)
+        legs.append(out)
+
+    # The name, and then the four parameters under it -- the block's
+    # whole behaviour, written where there is room for it. Nothing else
+    # on the drawing says what a `z` or an `h` block actually does, and
+    # the reader would otherwise have to go back to the description for
+    # `[40,20j,30j,50]` and remember that the order is 11, 12, 21, 22.
+    params = _port_params(e)
+    lines = 1 + len(params)
+    top = (by0 + by1) / 2.0 - (lines - 1) * PORT_BOX_LINE / 2.0 + 4.0
+    cv.runs(mid, top, _name_runs(e.name))
+    for i, text in enumerate(params):
+        cv.text(mid, top + (i + 1) * PORT_BOX_LINE, text)
+    return legs
+
+
+def _port_params(e: Element) -> List[str]:
+    """`zp,1,2,[4,5,6,7]` -> ['zp11 = 4', 'zp12 = 5', ...].
+
+    Empty when the reader gave none: each parameter is then a free
+    symbol of that very name, and writing `z11 = z11` four times says
+    nothing the box's own letter has not said already."""
+    raw = e.raw_fields[2] if len(e.raw_fields) > 2 else ""
+    raw = (raw or "").strip()
+    if not (raw.startswith("[") and raw.endswith("]")):
+        return []
+    body, parts, depth, cur = raw[1:-1], [], 0, ""
+    for ch in body:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur.strip())
+    if len(parts) != 4:
+        return []
+    return ["{0}{1} = {2}".format(e.name, n, _round_long_floats(v))
+            for n, v in zip(("11", "12", "21", "22"), parts)]
+
+
+TRANS_OFF = 19.0     # each winding's axis, either side of the core
+TRANS_CORE = 2.5     # half the gap between the two core bars
+
+
+def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
+                      y_top: float, y_bot: float) -> List[float]:
+    """An ideal transformer: two windings facing a core, with the
+    polarity dots and the turns ratio.
+
+    Four terminals like the two-port, and for the same reason -- the
+    reader names two nodes and the other two are ground -- so each
+    winding runs from its node down to the rail and the two share that
+    return. Returns the x positions its windings put on the rail.
+
+    **The dots carry the polarity and the printed ratio shows
+    magnitudes**, which is how the books set it: `t,2,3,1,-2` draws as
+    `1 : 2` with the secondary's dot at the foot of its winding.
+
+    The two are alternative notations, never both. `engine._stamp_t`
+    sets `v(n1)/turns1 = v(n2)/turns2`, so a negative turn count already
+    says the secondary is inverted; move the dot as well and a reader
+    applies the reversal twice and reads AS7's Example 13.8 as `+2`.
+    This drawing did exactly that for a few hours on 1 Sep 2026, until
+    Roberto asked whether the inversion was deliberate or a double
+    count. It was a double count.
+
+    A ratio that is not a plain number -- `1 : n` -- has no sign to
+    read, so the dots stay together and it is printed as typed. That is
+    not a fallback but the honest answer: nothing in the description
+    says which way an unknown `n` runs.
+
+    Two core bars, not one. A single line between two windings at this
+    stroke reads as a wire joining them, which is precisely what an
+    ideal transformer does not have."""
+    mid = (xa + xb) / 2.0
+    xp, xs = mid - TRANS_OFF, mid + TRANS_OFF
+    lead = (y_bot - y_top - BODY) / 2.0
+    top, bot = y_top + lead, y_top + lead + BODY
+
+    # The primary is mirrored about its own axis, so the two windings
+    # face each other across the core instead of both spiralling the
+    # same way. `scale(1,-1)` inside the rotated frame flips the local
+    # y that the rotation has already turned into screen x -- and it
+    # flips the coil's ends with it, which is what keeps the pair a true
+    # mirror rather than one coil slid over.
+    for x, flip in ((xp, " scale(1,-1)"), (xs, "")):
+        cv.raw('<g transform="translate({0:g},{1:g}) rotate(90){3}">{2}</g>'
+               .format(x, y_top, _body_l(y_bot - y_top), flip),
+               (x - REACH["l"], top), (x + REACH["l"], bot))
+        cv.ink(x - REACH["l"], top, x + REACH["l"], bot)
+        cv.eseg(x, y_top, x, y_bot, half=BODY / 2.0)
+    cv.wire(min(xa, xp), y_top, xp, y_top)
+    cv.wire(xs, y_top, max(xb, xs), y_top)
+
+    bars = []
+    for bx in (mid - TRANS_CORE, mid + TRANS_CORE):
+        bars.append('<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'
+                    .format(bx, top - 3, bot + 3))
+    cv.raw("".join(bars), (mid - TRANS_CORE, top - 3),
+           (mid + TRANS_CORE, bot + 3))
+    cv.ink(mid - TRANS_CORE, top - 3, mid + TRANS_CORE, bot + 3)
+
+    # Signs agree -> same polarity, dots level. Only a pair of plain
+    # numbers can be compared; anything symbolic keeps them together.
+    turns, same = [], True
+    for f in (e.fields[2], e.fields[3]):
+        try:
+            turns.append(float(f))
+        except (TypeError, ValueError):
+            turns = []
+            break
+    if turns:
+        same = (turns[0] < 0) == (turns[1] < 0)
+    cv.dot(xp - 9, top + 3)
+    cv.dot(xs + 9, top + 3 if same else bot - 3)
+
+    # The sign has gone into the dots, so the ratio shows magnitudes --
+    # printing both would say the reversal twice.
+    if turns:
+        shown = ["{0:g}".format(abs(t)) for t in turns]
+    else:
+        shown = [_round_long_floats(str(e.fields[2])),
+                 _round_long_floats(str(e.fields[3]))]
+    ratio = "{0} : {1}".format(*shown)
+    cv.text(mid, top - 9, ratio)
+    cv.runs(mid, top - 9 - LABEL_ASCENT - LABEL_GAP - _name_below(),
+            _name_runs(e.name))
+    return [xp, xs]
 
 
 def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
@@ -1431,6 +1779,28 @@ class _Layout:
                 for e in elems[1:]:
                     extra.setdefault(i, []).append(e)
 
+        # A four-terminal block (two-port, transformer) drops two legs to
+        # the rail from between its two nodes, and the gutter beside a
+        # node column is where the *neighbouring* element's labels live
+        # -- so on adjacent columns a leg lands straight through them.
+        # Measured, not guessed: it put the `100V` of AS7's Example 19.2
+        # on a wire. Give the block a column of clear space to hang in.
+        # A two-port takes two columns of it rather than one: the block
+        # is wider than the transformer's pair of coils, and at one
+        # column its left face landed on the neighbouring source's value
+        # label -- the harness caught `100V` on the box. Two also puts
+        # the leads at about half the block's width, which is the
+        # proportion Roberto's reference has.
+        idx_of = {n: k for k, n in enumerate(order)}
+        spacer_after: Dict[int, int] = {}
+        for e in self.spanning:
+            want = 1 if (e.kind in PORT_BLOCK or e.kind == "t") else 0
+            if want:
+                a, b = idx_of.get(e.n1), idx_of.get(e.n2)
+                if a is not None and b is not None and abs(a - b) == 1:
+                    k = min(a, b)
+                    spacer_after[k] = max(spacer_after.get(k, 0), want)
+
         col = 0
         own_col: List[Tuple[str, Element]] = []   # (node, elem) pairs
         for i, n in enumerate(order):
@@ -1448,6 +1818,7 @@ class _Layout:
                 self.elem_col[e.name] = col
                 own_col.append((_ground_node(e), e))
                 col += 1
+            col += spacer_after.get(i, 0)
         self.cols = max(col, 1)
 
         for n, e in at_node:
@@ -1739,6 +2110,27 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     return grounded_at
 
 
+def _ground_symbol(cv: _Canvas, x: float, y: float) -> None:
+    """The stem, the three bars and the node's name. Drawn wherever the
+    rail deserves saying so out loud rather than being traced.
+
+    The name sits centred *under* the bars (Roberto, 1 Sep 2026). Beside
+    them it had to know which side it had room on -- a symbol set left of
+    a two-port has the block immediately to its right -- and underneath
+    there is never anything to collide with."""
+    parts = ['<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'.format(x, y, y + 12)]
+    for i, half in enumerate((11.0, 7.0, 3.0)):
+        yy = y + 12 + i * 4
+        parts.append('<path d="M{0:g} {1:g} L{2:g} {1:g}"/>'
+                     .format(x - half, yy, x + half))
+    cv.raw("".join(parts), (x - 11, y), (x + 11, y + 20))
+    cv.ink(x - 11, y, x + 11, y + 20)
+    # Name the reference node, same as every other node is named -- "0"
+    # is a node in the description like any other, and readers tracing
+    # v_2 back to its reference need to see it.
+    cv.text(x, y + 20 + LABEL_ASCENT + GAP, "0")
+
+
 def _render(elements: List[Element]) -> str:
     lay = _Layout(elements)
     cv = _Canvas()
@@ -1748,10 +2140,42 @@ def _render(elements: List[Element]) -> str:
     segs: Dict[str, Tuple[float, float, float, float]] = {}
 
     # 1. elements between two non-ground nodes, along the top row
+    ground_x: List[float] = []
+    # extra places to draw the symbol, each with the side its name
+    # has room on
+    ground_marks: List[float] = []
+    # a two-port's left and right faces, which the rail stops at
+    port_spans: List[Tuple[float, float]] = []
     for e in lay.spanning:
         lvl = lay.level[e.name]
         y = y_top - lvl * lay.stack_h
         xa, xb = lay.px(lay.node_col[e.n1]), lay.px(lay.node_col[e.n2])
+        if e.kind == "t" or e.kind in PORT_BLOCK:
+            # Four terminals: these ground their own lower pair, so they
+            # never sit on a stacked level and never carry a single
+            # series current the way a two-terminal element does.
+            if e.kind == "t":
+                legs = _draw_transformer(cv, e, xa, xb, y_top, y_bot)
+                ground_x += legs
+                # Both windings return to the rail, so one symbol
+                # between their two feet says it once for the pair.
+                ground_marks.append(sum(legs) / len(legs))
+            else:
+                legs = _draw_port_box(cv, e, xa, xb, y_top, y_bot)
+                # Both lower terminals are ground, and each says so
+                # where it is rather than making the reader trace the
+                # rail to a symbol at the far end of the drawing
+                # (Roberto, 1 Sep 2026). Set just past the box, since
+                # its lower edge now hangs below the rail and a symbol
+                # on the terminal itself would be drawn inside it.
+                # The symbol goes at the foot of each leg, which is
+                # already the midpoint of its gap -- offsetting it from
+                # there is what put it back against the node column.
+                ground_x += legs
+                ground_marks += legs
+                port_spans.append((legs[0], legs[1]))
+            segs[e.name] = (xa, y_top, xb, y_top)
+            continue
         if lvl:
             # a stacked parallel branch: risers at each end back down to
             # the row the node actually lives on
@@ -1762,7 +2186,6 @@ def _render(elements: List[Element]) -> str:
         segs[e.name] = (xa, y, xb, y)
 
     # 2. elements with one terminal on ground, hanging down to the rail
-    ground_x: List[float] = []
     for e in lay.grounded:
         n = e.n2 if e.n1 == "0" else e.n1
         col_e, col_n = lay.elem_col[e.name], lay.node_col[n]
@@ -1788,29 +2211,48 @@ def _render(elements: List[Element]) -> str:
         if gx is not None:
             ground_x.append(gx)
 
-    # 4. the ground rail, plus a symbol at its left end
+    # 4. the ground rail, plus a symbol wherever it is worth naming
     if ground_x:
         gx0, gx1 = min(ground_x), max(ground_x)
-        cv.wire(gx0, y_bot, gx1, y_bot)
+        # The rail stops at a two-port's left face and picks up again at
+        # its right one: it must not be drawn *through* the block, which
+        # would read as a wire crossing the box (Roberto, 1 Sep 2026).
+        # The block's own two lower terminals are where the rail ends
+        # and begins, and they are ground in their own right.
+        cut = sorted(port_spans)
+        segments, run = [], gx0
+        for a, b in cut:
+            if a > run:
+                segments.append((run, a))
+            run = max(run, b)
+        if gx1 > run:
+            segments.append((run, gx1))
+        if not segments:
+            segments = [(gx0, gx1)]
+        for lo, hi in segments:
+            cv.wire(lo, y_bot, hi, y_bot)
+        edges = {x for span in cut for x in span}
         for x in sorted(set(ground_x)):
-            if gx0 < x < gx1:
+            # No dot where the rail merely arrives at a block's terminal
+            # -- nothing branches there, the wire simply ends.
+            if gx0 < x < gx1 and x not in edges:
                 cv.dot(x, y_bot)
-        # The ground symbol is drawn raw rather than as wires: its bars
-        # are decoration, and the wire pass would otherwise mistake the
-        # stem meeting the first bar for a T-junction and dot it.
-        stem_and_bars = ['<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'.format(
-            gx0, y_bot, y_bot + 12)]
-        for i, half in enumerate((11.0, 7.0, 3.0)):
-            yy = y_bot + 12 + i * 4
-            stem_and_bars.append('<path d="M{0:g} {1:g} L{2:g} {1:g}"/>'
-                                 .format(gx0 - half, yy, gx0 + half))
-        cv.raw("".join(stem_and_bars),
-               (gx0 - 11, y_bot), (gx0 + 11, y_bot + 20))
-        cv.ink(gx0 - 11, y_bot, gx0 + 11, y_bot + 20)
-        # Name the reference node, same as every other node is named --
-        # "0" is a node in the description like any other, and readers
-        # tracing v_2 back to its reference need to see it.
-        cv.text(gx0 + 16, y_bot + 21, "0", "start")   # right of the bars
+        # The rail's own symbol, and one at each extra place a block
+        # asked for. `_ground_symbol` draws it raw rather than as wires:
+        # the bars are decoration, and the wire pass would otherwise
+        # mistake the stem meeting the first bar for a T-junction and
+        # dot it.
+        # **One symbol per run of rail**, and no more (Roberto,
+        # 1 Sep 2026: "there should not be two ground nodes on the same
+        # line"). Where a block asked for one, that is the one -- it
+        # sits in the middle of its own gap, which is nearer to what the
+        # reader is looking at than the far-left end of the drawing.
+        # Otherwise the run is named at its left end, as it always was.
+        # A two-port gets two symbols not by exception but because it
+        # cuts the rail in two, and each half is a run of its own.
+        for lo, hi in segments:
+            inside = [m for m in ground_marks if lo - 0.5 <= m <= hi + 0.5]
+            _ground_symbol(cv, inside[0] if inside else lo, y_bot)
         cv.raw("", (gx0 - 14, y_bot + 26))
 
     # 5. junction dots on the top row wherever three or more things meet
@@ -1925,8 +2367,18 @@ def draw(desc: str):
 # * A non-grounded op-amp `+` input is routed just under the node row;
 #   where it crosses another wire the crossing is drawn as a hop, but a
 #   dense multi-amp circuit can still accumulate several hops.
-# * Two-port blocks (z/y/h/g/a/b) and the transformer `t` draw as a
-#   labelled box, without their port parameters.
+# * A two-port block (z/y/h/g/a/b) draws as a labelled box in line
+#   between its two nodes, without its port parameters. Richer symbols
+#   were built on 1 Sep 2026 -- four terminals, the lower pair to the
+#   rail, which is what `engine._stamp_two_port` actually models, since
+#   it reads both port voltages against ground -- and Roberto's ruling
+#   was that they cluttered the drawing more than they informed it. The
+#   box does not show the ground return and does not show that the two
+#   port currents differ; the parameters and the answers do.
+# * The transformer `t` does have a symbol: two windings facing a core,
+#   with the polarity dots and the turns ratio. Its lower terminals go
+#   to the rail, which is not a stylistic choice -- `engine._stamp_t`
+#   reads both winding voltages against ground.
 # * A name is drawn upper-cased with its underscores closed up, so the
 #   display is many-to-one: `rab`, `rAB` and `r_a_b` all read R_AB. The
 #   drawing is the only place this happens -- the answers, the caption
