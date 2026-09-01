@@ -36,6 +36,7 @@ from typing import Dict, List, Optional, Tuple
 
 import sympy as sp
 
+from . import messages as M
 from .elements import CircuitError, Element, TWO_PORT_KINDS
 from .si_prefix import (expand_shorthand, expand_value, safe_sympify,
                         hijacked_names)
@@ -243,7 +244,7 @@ class Circuit:
                 continue  # folded into the 'l' elements it couples
             method = getattr(self, f"_stamp_{e.kind}", None)
             if method is None:
-                raise CircuitError(f"No stamping rule implemented for element kind '{e.kind}'.")
+                raise CircuitError(M.E_NO_STAMPING_RULE, kind=e.kind)
             method(e)
 
         for node, total in self.node_sum.items():
@@ -568,7 +569,7 @@ class Circuit:
             i1 = (p11 / p12) * v1 + (-1 / p12) * v2
             i2 = (-(p11 * p22 - p12 * p21) / p12) * v1 + (p22 / p12) * v2
         else:
-            raise CircuitError(f"Unknown two-port kind '{k}'.")
+            raise CircuitError(M.E_UNKNOWN_TWOPORT, kind=k)
 
         i1_sym = self.i_symbol(f"{e.name}{n1}")
         i2_sym = self.i_symbol(f"{e.name}{n2}")
@@ -768,12 +769,8 @@ def _diagnose_unsolvable(circuit: "Circuit") -> Optional[str]:
                 x, via = prev[x]
                 loop.append(via)
             members = ", ".join(sorted(loop))
-            return (
-                f"Elements {members} form a loop that fixes the same voltage "
-                "more than once (voltage sources, shorts, zero-ohm resistors"
-                + (" and inductors, which are shorts in dc" if dc else "")
-                + "). Their values contradict each other, so no solution exists."
-            )
+            return ((M.E_VOLTAGE_LOOP_DC if dc else M.E_VOLTAGE_LOOP),
+                    {"members": members})
         parent[find(a)] = find(b)
         adj.setdefault(a, []).append((b, name))
         adj.setdefault(b, []).append((a, name))
@@ -782,12 +779,8 @@ def _diagnose_unsolvable(circuit: "Circuit") -> Optional[str]:
     for node, names in current_only.items():
         if node != "0" and other_at.get(node, 0) == 0:
             members = ", ".join(sorted(names))
-            return (
-                f"Node {node} connects only to {members}, which fix the "
-                "current into it (current sources"
-                + (" and capacitors, which are open in dc" if dc else "")
-                + "). Those currents cannot sum to zero, so no solution exists."
-            )
+            return ((M.E_CURRENT_NODE_DC if dc else M.E_CURRENT_NODE),
+                    {"node": node, "members": members})
     return None
 
 
@@ -910,9 +903,7 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
                 kept.append(eq)
                 continue
             if sp.simplify(eq) is sp.false:
-                raise CircuitError(
-                    f"Equation '{raw}' contradicts the circuit as described."
-                )
+                raise CircuitError(M.E_EQUATION_CONTRADICTS, equation=raw)
         extra_eqs = kept
         circuit.equations.extend(extra_eqs)
         # Convenience beyond the original: a brand-new symbol appearing
@@ -970,9 +961,7 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
                 filters.append((str(raw), _canonicalize(rel, circuit.alias_map)))
                 continue
             if "=" not in text:
-                raise CircuitError(
-                    f"Condition '{raw}' must have the form name = value, "
-                    f"or be an inequality such as name > 0.")
+                raise CircuitError(M.E_CONDITION_FORM, condition=raw)
             lhs, rhs = text.split("=", 1)
             lhs_expr = _canonicalize(
                 safe_sympify(lhs, reserve_imaginary=reserve_imaginary),
@@ -991,18 +980,12 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
         unknowns = list(dict.fromkeys(circuit.unknowns))  # de-dup, preserve order
         solutions = sp.solve(circuit.equations, unknowns, dict=True)
         if not solutions:
-            hint = ""
-            if equations:
-                hint = (" If your extra equation constrains a symbolic "
-                        "component value, list that symbol under unknowns "
-                        "so the solver may vary it.")
             why = _diagnose_unsolvable(circuit)
             if why:
-                raise CircuitError(why)
-            raise CircuitError(
-                "Could not solve the system of equations. If you used exact "
-                "numeric values, try again using symbolic values only." + hint
-            )
+                # A (code, args) pair from the diagnosis, not prose.
+                raise CircuitError(why[0], **why[1])
+            raise CircuitError(M.E_UNSOLVABLE_HINT if equations
+                               else M.E_UNSOLVABLE)
         results = []
         for sol in _rank_solutions(solutions):
             results.append(_expand_solution(circuit, sol))
@@ -1056,9 +1039,7 @@ def _filter_solutions(results, filters):
             kept.append(r)
     if not kept:
         names = ", ".join(f"'{raw}'" for raw, _ in filters)
-        raise CircuitError(
-            f"No solution satisfies the condition(s) {names}. The system "
-            f"solves, but every solution violates the restriction.")
+        raise CircuitError(M.E_NO_SOLUTION_FILTER, names=names)
     return kept
 
 

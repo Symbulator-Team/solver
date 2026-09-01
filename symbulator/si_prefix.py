@@ -17,6 +17,7 @@ The `[...]` shortcut is implemented; the fd-only `{...}` shortcut is not
 from __future__ import annotations
 
 import ast
+import decimal
 import re
 
 # (old substring, new substring) pairs, applied in this order -- mirrors
@@ -41,6 +42,50 @@ _SI_PREFIXES = [
     ("'f", "*10**-15"),
     ("'a", "*10**-18"),
 ]
+
+# The prefix exponents, keyed by the letter alone, for folding a prefix
+# into the number it follows rather than leaving a multiplication behind
+# (`_scaled_literal`). Same letters as the pairs above; one table so the
+# two cannot come to disagree about what `'n` means.
+_PREFIX_EXP = {
+    "k": 3, "K": 3, "M": 6, "G": 9, "T": 12, "P": 15,
+    "m": -3, "u": -6, "µ": -6, "μ": -6,
+    "n": -9, "p": -12, "f": -15, "a": -18,
+}
+
+# A number carrying a quoted prefix: `397.3'm`, `4.7'u`, `1'k`. The
+# lookbehind keeps it to a number that stands on its own, so a prefix
+# stuck to something else still falls through to the substring pass.
+_QUOTED_NUM_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])((?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?)'(["
+    + "".join(sorted(set(_PREFIX_EXP))) + r"])")
+
+
+def _scaled_literal(number: str, exponent: int) -> str:
+    """`("397.3", -3)` -> `"0.3973"`: the prefix folded into the number,
+    in base ten, before anything binary sees it.
+
+    Left as `397.3*10**-3`, the multiplication happens in binary
+    floating point and lands one unit in the last place away from the
+    decimal the reader typed: 0.39730000000000004. Nothing downstream
+    can undo that -- it is a different double, and `repr` is right to
+    print all seventeen digits of it -- so a SPICE netlist carried the
+    noise out to the page (Roberto, 1 Sep 2026). Scaling with `Decimal`
+    is exact in base ten, so the literal that reaches SymPy is the one
+    the reader wrote and the double is the nearest one to it.
+
+    **An integer mantissa keeps the `n*10**e` form.** SymPy reads that
+    as an exact Rational -- `100'p` is 1/10000000000, not a float -- and
+    a circuit of whole-numbered values still solves exactly, which is
+    the behaviour "Rounding: exact" exists for. Only a mantissa that
+    already has a decimal point or an exponent (and is therefore a Float
+    either way) is folded."""
+    if "." not in number and "e" not in number and "E" not in number:
+        return f"({number})*10**{exponent}"
+    try:
+        return str(decimal.Decimal(number).scaleb(exponent))
+    except (decimal.InvalidOperation, decimal.Overflow, ValueError):
+        return f"({number})*10**{exponent}"
 
 
 class ShorthandError(ValueError):
@@ -152,8 +197,8 @@ def expand_time_domain_braces(text: str) -> str:
             out.append(text[start:end])       # not an expression; leave it
             last = end
             continue
-        result = _check_transform(expr, t2s(expr, validate=False), "s",
-                                  "between brackets")
+        # No fn: this is the `{...}` shorthand, not a call.
+        result = _check_transform(expr, t2s(expr, validate=False), "s")
         out.append(f"({result})")
         last = end
     out.append(text[last:])
@@ -228,7 +273,9 @@ def expand_value(text: str, suffix: str = "si") -> str:
         if suffix == "ask":
             raise AmbiguousValueError([{"element": "?", "token": stripped,
                                         "number": num, "letter": suf}])
-        return f"({num})*10**{_BARE_SUFFIX_EXP[suf]}"
+        # Folded in base ten, same as the quoted form -- `397.3m` and
+        # `397.3'm` are the same value and must produce the same double.
+        return _scaled_literal(num, _BARE_SUFFIX_EXP[suf])
     return expand_shorthand(text)
 
 
@@ -423,6 +470,13 @@ def expand_shorthand(text: str, si: bool = True) -> str:
         result = _insert_implicit_multiplication(result)
 
     if si and "'" in result:
+        # Numbers first, so the prefix is folded into the number in base
+        # ten (`_scaled_literal`); the substring pass below then mops up
+        # any `'x` that was not sitting on a number of its own, which is
+        # what it has always done.
+        result = _QUOTED_NUM_RE.sub(
+            lambda m: _scaled_literal(m.group(1), _PREFIX_EXP[m.group(2)]),
+            result)
         for old, new in _SI_PREFIXES:
             result = result.replace(old, new)
         if "'" in result:

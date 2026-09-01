@@ -342,3 +342,41 @@ def test_current_of_untranslatable_element_cascades():
     net, warns = to_spice("e1,1,0,5:rx,1,0,rb:e2,2,0,5*i_rx:r2,2,0,1'k")
     assert any(w.startswith("rx:") for w in warns)
     assert any("current of 'rx'" in w for w in warns)
+
+
+# --- no representation noise in a netlist -----------------------------
+
+def test_a_prefixed_value_translates_without_noise():
+    """`js,0,d,397.3'm` is `Is 0 d 0.3973`, the same as `.3973` gives.
+
+    Roberto found it on 1 Sep 2026: the two spellings are the same
+    current and a netlist that prints one of them as
+    0.39730000000000004 is showing the reader a binary artefact. The
+    cause was upstream of this module -- see
+    si_prefix._scaled_literal -- but the netlist is where it surfaced,
+    so the test lives here too."""
+    plain, _ = to_spice("js,0,d,.3973:r1,d,0,10")
+    prefixed, _ = to_spice("js,0,d,397.3'm:r1,d,0,10")
+    assert plain == prefixed
+    assert "Is 0 d 0.3973\n" in prefixed
+
+
+def test_every_prefix_survives_the_round_trip_cleanly():
+    """Out to SPICE and back, for every prefix SPICE has a suffix for,
+    on every kind that carries a plain value. No token may grow the
+    seventeen digits of a float's repr."""
+    for typed in ("397.3'm", "4.7'u", "2.2'n", "1.1'k", "6.6'M", "3.3'G",
+                  "7.7'p", "5.5'f", "9.9'T", "100'p", "123.456'u"):
+        for kind, letter in (("r", "R"), ("c", "C"), ("l", "L")):
+            net, _ = to_spice("e1,1,0,5:%s1,1,0,%s" % (kind, typed))
+            line = [x for x in net.splitlines() if x.startswith(letter)][0]
+            token = line.split()[-1]
+            assert len(token) < 12, (typed, kind, token)
+            back, _ = from_spice("%s1 1 0 %s" % (letter, token))
+            assert "0000000" not in back, (typed, kind, back)
+
+
+def test_a_spice_suffix_is_read_in_base_ten():
+    """`397.3m` read back is 0.3973 -- the same shift, the same way."""
+    back, _ = from_spice("R1 1 0 397.3m")
+    assert "0.3973" in back and "0.39730000" not in back

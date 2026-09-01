@@ -26,6 +26,7 @@ from typing import Optional
 import sympy as sp
 
 from .analysis import Result, _run
+from . import messages as M
 from .elements import CircuitError
 
 
@@ -140,9 +141,7 @@ def th(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
                         suffix=suffix)
     vth = sp.simplify(_v(open_circuit, n1) - _v(open_circuit, n2))
     if vth == 0:
-        raise CircuitError(
-            "This circuit is not active (open-circuit voltage is 0). Try er() instead."
-        )
+        raise CircuitError(M.E_NOT_ACTIVE)
 
     run_kwargs = dict(domain=domain, omega=omega, params=params,
                       use_rms=use_rms, equations=equations,
@@ -160,11 +159,8 @@ def th(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
         try:
             ino, note = _short_by_limit(desc, n1, n2, run_kwargs)
         except Exception:
-            raise CircuitError(
-                f"The open-circuit voltage is {vth}, but the short-circuit "
-                f"current could not be found, either directly or as the "
-                f"limit of a vanishing resistance: {short_failed}"
-            ) from short_failed
+            raise CircuitError(M.E_NO_SHORT_CIRCUIT, vth=vth,
+                               reason=short_failed) from short_failed
 
     if ino is sp.oo or ino == sp.oo:
         # Unbounded current through a short means no impedance in the way,

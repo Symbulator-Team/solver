@@ -33,8 +33,13 @@ def test_u_without_a_bracket_is_left_for_the_micro_suffix():
     # touch them -- `7u` is 7 micro-somethings, handled further down.
     assert expand_shorthand("7u", si=False) == "7u"
     # And through the real entry point it becomes micro, not a function.
+    # A whole-numbered mantissa keeps the power form, which SymPy reads
+    # as an exact Rational; one with a decimal point is folded into a
+    # decimal literal instead, because multiplying it out in binary
+    # costs a unit in the last place (see si_prefix._scaled_literal).
     assert expand_value("7u") == "(7)*10**-6"
-    assert expand_value("4.7u") == "(4.7)*10**-6"
+    assert expand_value("4.7u") == "0.0000047"
+    assert float(safe_sympify(expand_value("4.7u"))) == float("4.7e-6")
 
 
 def test_quoted_micro_prefix_is_untouched():

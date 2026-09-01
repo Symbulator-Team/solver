@@ -51,10 +51,12 @@ on both sides.
 """
 from __future__ import annotations
 
+import decimal
 import math
 import re
 from typing import List, Optional, Tuple
 
+from . import messages as M
 from .elements import (parse_circuit, CircuitError, TWO_PORT_KINDS,
                        two_port_param_texts)
 from .si_prefix import safe_sympify
@@ -105,6 +107,43 @@ def _exact(value: float, spec: str = "g") -> str:
     return repr(value)
 
 
+def _mantissa(value: float, exp: int) -> Optional[str]:
+    """`(2.2e-9, -9)` -> `"2.2"`: the value with a suffix's decimal
+    shift taken out of it.
+
+    In base ten, because `2.2e-9 / 10**-9` in binary is
+    2.1999999999999997 and that noise went straight into the netlist as
+    `2.1999999999999997N` (Roberto, 1 Sep 2026). A suffix *is* a decimal
+    shift, so shifting in decimal is both simpler and right.
+
+    None when the mantissa cannot be written as a plain decimal that
+    reads back as `value`, and the caller falls back to e-notation. The
+    read-back goes through the decimal-to-double conversion rather than
+    a float multiplication, so the check is as exact as the shift."""
+    try:
+        # `f`, not `str`: Decimal keeps whatever form it was given, so
+        # 1e-10 shifted up by twelve is `1E+2` and would lose its suffix
+        # to the e-notation check below. A mantissa is always in
+        # [1, 1000) here, so fixed-point is always short.
+        text = format(decimal.Decimal(_exact(value)).scaleb(-exp), "f")
+    except (decimal.InvalidOperation, decimal.Overflow, ValueError):
+        return None
+    if "e" in text or "E" in text:
+        return None
+    # A decimal shift keeps its digit count, so 1100 scaled down by
+    # three is `1.100`. Trim the zeros it grew -- but only past a
+    # decimal point, since `Decimal.normalize()` would take `100` to
+    # `1E+2` and cost the suffix that a mantissa of 100 is entitled to.
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    try:
+        if float(f"{text}e{exp}") != value:
+            return None
+    except (ValueError, OverflowError):
+        return None
+    return text
+
+
 def _spice_number(value: float) -> str:
     """Format a float the way a SPICE reader expects: a suffix when one
     fits cleanly, plain decimal for near-unit values, e-notation
@@ -117,11 +156,9 @@ def _spice_number(value: float) -> str:
         return _exact(value)
     exp = math.floor(math.log10(abs(value)) / 3) * 3
     if exp in _SPICE_SUFFIX and exp != -3:
-        mant = value / 10 ** exp
-        text = _exact(mant)
-        if ("e" not in text and "E" not in text
-                and float(text) * 10 ** exp == value):
-            return f"{text}{_SPICE_SUFFIX[exp]}"
+        mant = _mantissa(value, exp)
+        if mant is not None:
+            return f"{mant}{_SPICE_SUFFIX[exp]}"
     return _exact(value)
 
 
@@ -132,12 +169,20 @@ def _parse_spice_number(token: str) -> Optional[float]:
     if not m:
         return None
     number, suffix = m.group(1), (m.group(2) or "").lower()
-    value = float(number)
     if suffix == "mil":
-        return value * 25.4e-6
-    if suffix:
-        value *= 10 ** _SPICE_SUFFIX_IN[suffix]
-    return value
+        return float(number) * 25.4e-6
+    if not suffix:
+        return float(number)
+    # Scaled in base ten, not by multiplying two doubles: `397.3m` is
+    # 0.3973, and `float("397.3") * 10**-3` is 0.39730000000000004, a
+    # different double. The same fix as `si_prefix._scaled_literal`, and
+    # for the same reason -- a suffix is a decimal shift, so shifting it
+    # in decimal is both simpler and right.
+    try:
+        return float(decimal.Decimal(number).scaleb(
+            _SPICE_SUFFIX_IN[suffix]))
+    except (decimal.InvalidOperation, decimal.Overflow, ValueError):
+        return float(number) * 10 ** _SPICE_SUFFIX_IN[suffix]
 
 
 def _symb_number(value: float) -> str:
@@ -149,11 +194,9 @@ def _symb_number(value: float) -> str:
         return _exact(value)
     exp = math.floor(math.log10(abs(value)) / 3) * 3
     if exp in _SYMB_PREFIX:
-        mant = value / 10 ** exp
-        text = _exact(mant)
-        if ("e" not in text and "E" not in text
-                and float(text) * 10 ** exp == value):
-            return f"{text}'{_SYMB_PREFIX[exp]}"
+        mant = _mantissa(value, exp)
+        if mant is not None:
+            return f"{mant}'{_SYMB_PREFIX[exp]}"
     return _exact(value)
 
 
@@ -688,7 +731,7 @@ def from_spice(text: str) -> Tuple[str, List[str]]:
             raw_lines.append(stripped)
 
     if not raw_lines:
-        raise CircuitError("The SPICE netlist is empty.")
+        raise CircuitError(M.E_SPICE_EMPTY)
 
     # Two passes: inductor values first, so a K line can be resolved no
     # matter where it appears.
@@ -742,9 +785,8 @@ def from_spice(text: str) -> Tuple[str, List[str]]:
             out.append(parsed)
 
     if not out:
-        raise CircuitError(
-            "No translatable elements found in the SPICE netlist. "
-            + (" ".join(warnings) if warnings else ""))
+        raise CircuitError(M.E_SPICE_NOTHING,
+                           warnings=" ".join(warnings) if warnings else "")
     return "\n".join(out), warnings
 
 

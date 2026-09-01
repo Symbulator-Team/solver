@@ -136,3 +136,31 @@ def test_the_shorthand_that_is_correct_still_solves():
     # The guard must not cost the feature it guards.
     r = dc("e,1,0,10:r1,1,0,[1'k,2'k]")
     assert r.v("1") == 10
+
+
+# --- an SI prefix is a decimal shift, so it is done in decimal --------
+
+def test_a_prefix_is_folded_in_base_ten():
+    """`397.3'm` is 0.3973, not 0.39730000000000004.
+
+    Left as `397.3*10**-3` the multiplication happens in binary and
+    lands one unit in the last place from the decimal the reader typed.
+    Nothing downstream can undo that -- it is a different double -- so
+    the fold happens in base ten, before anything binary sees it
+    (Roberto, 1 Sep 2026, having found it in a SPICE netlist)."""
+    from symbulator.si_prefix import expand_value, safe_sympify
+    for typed, meant in [("397.3'm", "0.3973"), ("2.2'n", "2.2e-9"),
+                         ("4.7'u", "4.7e-6"), ("1.1'k", "1100"),
+                         ("6.6'M", "6.6e6"), ("123.456'u", "123.456e-6"),
+                         ("397.3m", "0.3973"), ("2.2n", "2.2e-9")]:
+        got = float(safe_sympify(expand_value(typed)))
+        assert got == float(meant), (typed, repr(got), meant)
+
+
+def test_a_whole_numbered_prefix_value_stays_exact():
+    """An integer mantissa keeps the `n*10**e` form, which SymPy reads
+    as an exact Rational -- `100'p` is 1/10000000000, not a float, and
+    a circuit of whole-numbered values still solves exactly."""
+    from symbulator.si_prefix import expand_value, safe_sympify
+    for typed in ("1'k", "100'p", "47'n", "2'k"):
+        assert safe_sympify(expand_value(typed)).is_Rational, typed

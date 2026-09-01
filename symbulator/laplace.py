@@ -71,14 +71,21 @@ def _domain_of(expr: sp.Expr) -> set:
     return {x.name for x in getattr(expr, "free_symbols", set())} & {"t", "s"}
 
 
-def _check_transform(expr, result, into: str, origin: str):
+def _check_transform(expr, result, into: str, fn: str = None):
     """Both ends of a transform, or a CircuitError explaining which failed.
 
     `into` is the domain being transformed *into* -- "s" for t2s, "t" for
-    s2t. `origin` names how the reader asked for it, so the message points
-    at what they typed: "between brackets" or "as an argument to t2s()".
+    s2t. `fn` names the function the reader called, so the message points
+    at what they typed; None means the `{...}` bracket shorthand.
+
+    It used to be `origin`, a ready-made English phrase ("between
+    brackets", "as an argument to t2s()"). A phrase cannot be translated
+    from inside an argument, so #199 made the two forms two codes apiece
+    and reduced what crosses the boundary to a function's name, which is
+    the same in every language.
     """
     from .elements import CircuitError
+    from . import messages as M
 
     frm = "t" if into == "s" else "s"
 
@@ -86,10 +93,8 @@ def _check_transform(expr, result, into: str, origin: str):
     #    a valid expression in either domain, and {5} means a step of 5.
     if into in _domain_of(expr):
         raise CircuitError(
-            f"The expression provided {origin} is already in the "
-            f"{into}-domain, so there is nothing to transform. "
-            f"{'Brackets convert' if 'bracket' in origin else 'This converts'} "
-            f"from {frm} to {into}.")
+            M.E_ALREADY_IN_DOMAIN_CALL if fn else M.E_ALREADY_IN_DOMAIN_BRACKETS,
+            into=into, frm=frm, **({"fn": fn} if fn else {}))
 
     # -- the output end. An unevaluated transform is SymPy saying it could
     #    not find a closed form; it must not travel any further.
@@ -97,8 +102,8 @@ def _check_transform(expr, result, into: str, origin: str):
                    else sp.InverseLaplaceTransform)
     if result.has(unevaluated) or frm in _domain_of(result):
         raise CircuitError(
-            f"The expression provided {origin} does not evaluate to a "
-            f"valid {into}-domain expression.")
+            M.E_NOT_VALID_DOMAIN_CALL if fn else M.E_NOT_VALID_DOMAIN_BRACKETS,
+            into=into, **({"fn": fn} if fn else {}))
     return result
 
 
@@ -123,7 +128,7 @@ def t2s(expr_t, t: sp.Symbol = None, s: sp.Symbol = S,
         # form does this: blaming t2s() for brackets names the wrong
         # thing.
         return result
-    return _check_transform(expr, result, "s", "as an argument to t2s()")
+    return _check_transform(expr, result, "s", "t2s")
 
 
 def _invert(expr: sp.Expr, s: sp.Symbol = S, t: sp.Symbol = T) -> sp.Expr:
@@ -150,8 +155,7 @@ def s2t(expr_s, s: sp.Symbol = S, t: sp.Symbol = T) -> sp.Expr:
     """Inverse Laplace transform of an s-domain expression -- ports
     `s2t()`."""
     expr = _read(expr_s)
-    return _check_transform(expr, _invert(expr, s, t), "t",
-                            "as an argument to s2t()")
+    return _check_transform(expr, _invert(expr, s, t), "t", "s2t")
 
 
 # --------------------------------------------------------------------------

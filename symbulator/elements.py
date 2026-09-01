@@ -66,8 +66,43 @@ OPTIONAL_IC_KINDS = {"l", "c"}
 TWO_PORT_KINDS = set("zyghab")
 GROUNDED_ELEMENT_KINDS = set("tzyghab")  # neither node may be "0"
 
+from . import messages as M
+
 class CircuitError(ValueError):
-    """Raised for any issue found while parsing/validating a circuit."""
+    """Raised for any issue found while parsing/validating a circuit.
+
+    Since #199 it carries a **code and its arguments** as well as its
+    English:
+
+        raise CircuitError(E_TWOPORT_LIST_LEN, name=el.name, n=len(items))
+
+    `exc.code` is the number, `exc.args_map` the arguments by name, and
+    `str(exc)` the English rendered from `messages.CATALOGUE`. The
+    interface reads the code and puts it into whichever of thirteen
+    languages is on; everything else -- a traceback, a bug report, the
+    `.txt` export, verify_lesson.py's output -- reads the English, which
+    is why the package keeps it rather than shipping bare numbers.
+
+    **A plain string still works**, and is what `str(exc)` gives you
+    back: `CircuitError("some sentence")` sets `code` to None. That is
+    not a transition shim to be removed later. It is how an exception
+    re-raised from elsewhere, or one this package has not got round to
+    coding, keeps flowing through unchanged -- and it is what let #199
+    land without the app and the package having to deploy in step.
+    """
+
+    def __init__(self, code_or_message, **args):
+        if isinstance(code_or_message, int):
+            from .messages import render, severity
+            self.code = code_or_message
+            self.args_map = args
+            self.severity = severity(code_or_message)
+            super().__init__(render(code_or_message, args))
+        else:
+            self.code = None
+            self.args_map = {}
+            self.severity = "error"
+            super().__init__(code_or_message)
 
 
 @dataclass
@@ -146,7 +181,7 @@ def _split_elements(desc: str) -> List[str]:
         desc = desc[1:]
     parts = [p.strip() for p in desc.split(":") if p.strip() != ""]
     if not parts:
-        raise CircuitError("Circuit description is empty.")
+        raise CircuitError(M.E_EMPTY_DESCRIPTION)
     return parts
 
 
@@ -204,7 +239,7 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
         parts = _split_fields(raw)
         typed_parts = _split_fields(typed) if typed != raw else parts
         if not parts or parts[0] == "":
-            raise CircuitError(f"Malformed element description: '{raw}'.")
+            raise CircuitError(M.E_MALFORMED_ELEMENT, raw=raw)
 
         # Element names, element letters and node names are all
         # case-insensitive: they fold to lowercase here so that R1 and
@@ -216,10 +251,7 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
         kind = name[0] if name else ""
 
         if kind not in VALID_PREFIXES:
-            raise CircuitError(
-                f"Element starting with '{kind}' not recognised. "
-                f"Give element '{parts[0]}' a proper name."
-            )
+            raise CircuitError(M.E_UNKNOWN_KIND, kind=kind, name=parts[0])
 
         # A name must survive being embedded in a symbol: the answers are
         # written as i_<name>, v_<name>, p_<name>, and a reader must be
@@ -229,16 +261,10 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
         # -- so the characters that would do that are refused here, where
         # the message can still point at the right element.
         if not name.isidentifier():
-            raise CircuitError(
-                f"Element name '{parts[0]}' contains a character that "
-                f"cannot be part of a name. Use letters, digits and "
-                f"underscores, so that the element's answers (its "
-                f"'i_...', 'v_...', 'p_...') can be written inside a "
-                f"value or an added equation."
-            )
+            raise CircuitError(M.E_BAD_NAME_CHAR, name=parts[0])
 
         if name in seen_names:
-            raise CircuitError(f"More than one element has been named '{name}'.")
+            raise CircuitError(M.E_DUPLICATE_NAME, name=name)
         seen_names.add(name)
 
         # `[...]` means exactly two things (#165, restoring the
@@ -254,14 +280,8 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
             value_term = 3 if (kind == "r" or kind in TWO_PORT_KINDS) else None
             for i, tp in enumerate(typed_parts):
                 if ("[" in tp or "]" in tp) and i != value_term:
-                    raise CircuitError(
-                        f"'{typed.strip()}' uses [...] where it has no "
-                        f"meaning. Square brackets are the "
-                        f"parallel-resistor shorthand (in an r element's "
-                        f"value) or a two-port's parameter term "
-                        f"([p11,p12,p21,p22]); for anything else, call "
-                        f"pr(...) explicitly."
-                    )
+                    raise CircuitError(M.E_BRACKETS_MISUSED,
+                                       value=typed.strip())
 
         expected = FIELD_COUNTS[kind]
         if kind in OPTIONAL_IC_KINDS or kind in TWO_PORT_KINDS:
@@ -270,22 +290,15 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
             allowed = {expected}
         if len(parts) not in allowed:
             if kind in OPTIONAL_IC_KINDS:
-                raise CircuitError(
-                    f"Your description of element '{name}' has {len(parts)} terms. "
-                    f"{expected} or {expected + 1} (with an initial condition) terms are "
-                    f"expected for an element of type '{kind}'."
-                )
+                raise CircuitError(M.E_TERMS_WITH_IC, name=name,
+                                   got=len(parts), expected=expected,
+                                   expected_ic=expected + 1, kind=kind)
             if kind in TWO_PORT_KINDS:
-                raise CircuitError(
-                    f"Your description of element '{name}' has {len(parts)} terms. "
-                    f"{expected} terms are expected for a two-port element, or "
-                    f"{expected + 1} with its parameters as the last term: "
-                    f"[p11,p12,p21,p22]."
-                )
-            raise CircuitError(
-                f"Your description of element '{name}' has {len(parts)} terms. "
-                f"Exactly {expected} terms are expected for an element of type '{kind}'."
-            )
+                raise CircuitError(M.E_TERMS_TWO_PORT, name=name,
+                                   got=len(parts), expected=expected,
+                                   expected_params=expected + 1)
+            raise CircuitError(M.E_TERMS_EXACT, name=name, got=len(parts),
+                               expected=expected, kind=kind)
 
         fields = list(parts[1:])
         for idx in _IDENTIFIER_FIELD_IDX.get(kind, ()):
@@ -323,11 +336,7 @@ def two_port_param_texts(el: Element) -> Optional[List[str]]:
     shown = (el.raw_fields[2].strip()
              if len(el.raw_fields) > 2 else text)
     if not (text.startswith("pr(") and text.endswith(")")):
-        raise CircuitError(
-            f"The last term of two-port '{el.name}' is '{shown}'. A "
-            f"two-port's parameters are written as a four-entry list: "
-            f"[p11,p12,p21,p22]."
-        )
+        raise CircuitError(M.E_TWOPORT_LAST_TERM, name=el.name, shown=shown)
     inner = text[3:-1]
     parts: List[str] = []
     depth, current = 0, ""
@@ -345,11 +354,8 @@ def two_port_param_texts(el: Element) -> Optional[List[str]]:
             current += ch
     parts.append(current.strip())
     if len(parts) != 4 or any(p == "" for p in parts):
-        raise CircuitError(
-            f"The parameter list of two-port '{el.name}' has "
-            f"{len([p for p in parts if p])} entries. Exactly four are "
-            f"expected: [p11,p12,p21,p22]."
-        )
+        raise CircuitError(M.E_TWOPORT_LIST_LEN, name=el.name,
+                           n=len([p for p in parts if p]))
     return parts
 
 
@@ -396,14 +402,10 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
     for el in elements:
         if el.kind in GROUNDED_ELEMENT_KINDS:
             if el.n1 == "0" or el.n2 == "0":
-                raise CircuitError(
-                    f"Neither top node in element '{el.name}' can be ground."
-                )
+                raise CircuitError(M.E_TOP_NODE_GROUND, name=el.name)
 
         if el.n1 == el.n2 and el.kind != "m":
-            raise CircuitError(
-                f"Both nodes of '{el.name}' can't be the same node."
-            )
+            raise CircuitError(M.E_SAME_NODE, name=el.name)
 
         if el.kind in GROUNDED_ELEMENT_KINDS or el.n1 == "0" or el.n2 == "0":
             has_ground = True
@@ -416,15 +418,15 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
 
     if two_port_nodes is None:
         if not has_ground:
-            raise CircuitError("Circuit must contain a reference node 0.")
+            raise CircuitError(M.E_NEED_REFERENCE_NODE)
         _check_connected(elements)
     else:
         if n1_target == n2_target:
-            raise CircuitError("Both nodes in the input cannot be the same node.")
+            raise CircuitError(M.E_INPUT_SAME_NODE)
         if not node1_seen:
-            raise CircuitError(f"Circuit does not contain the node {n1_target} you mentioned.")
+            raise CircuitError(M.E_NO_SUCH_NODE, node=n1_target)
         if not node2_seen:
-            raise CircuitError(f"Circuit does not contain the node {n2_target} you mentioned.")
+            raise CircuitError(M.E_NO_SUCH_NODE, node=n2_target)
 
 
 def _check_connected(elements: List[Element]) -> None:
@@ -462,11 +464,7 @@ def _check_connected(elements: List[Element]) -> None:
     root = find("0")
     floating = sorted(n for n in parent if find(n) != root)
     if floating:
-        raise CircuitError(
-            "Node(s) " + ", ".join(floating)
-            + " have no path to the reference node 0; that part of the "
-            "circuit is floating and its voltages are undefined."
-        )
+        raise CircuitError(M.E_FLOATING_NODES, nodes=", ".join(floating))
 
 
 # Which field indices (0-based, after the element name) hold *values*
