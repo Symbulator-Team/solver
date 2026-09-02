@@ -131,7 +131,10 @@ parameters from an actual sub-circuit.
 `dc()`, `ac()`, and `fd()` return a `Result` with:
 - `res.v(node)` -- node voltage
 - `res.i(name)` -- element/branch current
-- `res["p_<name>"]` / `res["ap_<name>"]` -- real/apparent power (DC / AC only)
+- `res["p_<name>"]` / `res["ap_<name>"]` -- real (average) power in watts,
+  under one name or the other: `p_` in dc, and in ac with `use_rms=True`;
+  `ap_` in ac under the default peak-amplitude convention. They are the same
+  quantity, and **neither is apparent power** -- that is `abs(res["s_<name>"])`
 - `res["s_<name>"]` -- complex power (AC only)
 - `res["z_<name>"]` / `res["r_<name>"]` -- impedance / resistance seen by a source (AC / DC only)
 

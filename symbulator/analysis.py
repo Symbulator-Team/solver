@@ -176,7 +176,8 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
              use_rms: bool = False) -> Dict[str, sp.Expr]:
     """Compute the third-level quantities, derived *after* the KCL system
     is solved: branch voltage (v_<name>), power (p_<name> in dc, or
-    apparent/complex power s_<name> plus real average power in ac), and
+    complex power s_<name> plus its real part, the average power, in ac
+    -- under p_<name> with RMS phasors and ap_<name> without), and
     -- for sources only -- the impedance/resistance the source sees
     looking into the rest of the circuit (z_<name> / r_<name>).
 

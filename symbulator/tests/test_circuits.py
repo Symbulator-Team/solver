@@ -141,8 +141,31 @@ def test_dc_power_derived_quantity():
 
 def test_ac_complex_power_derived_quantity():
     res = ac("e1,1,0,10:r1,1,0,50", omega=1000)
-    # Pure resistive load: apparent power (peak convention) = |V|^2/(2R)
+    # Pure resistive load: average power (peak convention) = |V|^2/(2R).
+    # `ap_` holds the average power, not the apparent power. On a resistor
+    # the two coincide, so this assertion cannot tell them apart -- which
+    # is exactly why the README called `ap_` apparent for months without
+    # a test ever going red over it (#223). The next test can tell.
     assert approx_eq(res["ap_r1"], 10**2 / (2 * 50))
+
+
+def test_ap_is_average_power_not_apparent_power():
+    """`ap_` is the real part of the complex power, not its magnitude.
+
+    A resistive load cannot show the difference. A reactive one can: at
+    the source of this series R-L, S = -0.6 - 0.8j VA, so the average
+    power is -0.6 W while the apparent power |S| is 1.0 VA. If `ap_`
+    were ever made the magnitude, this goes red; the resistor test above
+    would not. #223.
+    """
+    # 10 V peak, omega = 1000, R = 30, omega*L = 40 -> |Z| = 50, pf = 0.6
+    res = ac("e1,1,0,10:r1,1,2,30:l1,2,0,0.04", omega=1000)
+    s = sp.N(res["s_e1"])
+    assert approx_eq(res["ap_e1"], sp.re(s))
+    assert approx_eq(res["ap_e1"], -0.6)
+    assert approx_eq(abs(s), 1.0)
+    # ...and the two really are different numbers here.
+    assert not approx_eq(res["ap_e1"], abs(s))
 
 
 def test_third_level_capacitor_current_is_fully_substituted():
