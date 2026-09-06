@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.29 -- 6 Sep 2026
+
+### Changed
+- **A transformer's internal unknown is no longer an answer.** When a
+  winding's top node is also another of the element's terminals
+  (`t,[1,0],[2,1]`, the autotransformer as one tapped winding), the
+  primary current the system needs steps aside to an internal name so
+  the node's answer can be the sum; 0.5.28 reported that internal name
+  among the values, where the app showed it under Expert Mode unknowns.
+  `Circuit.internal` drops it.
+- **A wide turns ratio is printed above the node row.** `80 : 80+120`
+  was set between the windings' upper leads, which are 38px apart, and
+  ran through both; the pixel harness caught it on AS7's Example 13.11
+  at 0.5px. A ratio estimated wider than that gap now goes above the
+  row, the name with it; `1 : 2` stays where it was.
+
 ## 0.5.28 -- 6 Sep 2026
 
 ### Changed

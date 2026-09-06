@@ -154,6 +154,10 @@ class Circuit:
         self.node_sum: Dict[str, sp.Expr] = {}
         self.equations: List[sp.Eq] = []
         self.unknowns: List[sp.Symbol] = []
+        # Unknowns the system needs but nobody asked for -- a
+        # transformer's primary current when its top node is also
+        # another of its terminals (#314) -- dropped from the answers.
+        self.internal: set = set()
         self.known: Dict[str, sp.Expr] = {}
         self._by_name: Dict[str, Element] = {e.name: e for e in elements}
         # Built before the first _value call (the mutuals loop below
@@ -495,6 +499,8 @@ class Circuit:
         free_name = f"{e.name}{n1}" if n1 not in others else f"{e.name}_p1"
         i1 = self.i_symbol(free_name)
         self.unknowns.append(i1)
+        if n1 in others:
+            self.internal.add(str(i1))
         i2_expr = -i1 * n1t / n2t
         v1 = self.v(n1) - self.v(n1b)
         v2 = self.v(n2) - self.v(n2b)
@@ -1102,7 +1108,8 @@ def _filter_solutions(results, filters):
 
 def _expand_solution(circuit: "Circuit", sol: Dict[sp.Symbol, sp.Expr]) -> Dict[str, sp.Expr]:
     """Turn one raw SymPy solution into the full {name: value} dict."""
-    result = {str(k): sp.simplify(v) for k, v in sol.items()}
+    result = {str(k): sp.simplify(v) for k, v in sol.items()
+              if str(k) not in circuit.internal}
     # Second-level quantities in `circuit.known` (a capacitor's
     # current and a current source's -- the only two kinds that go in
     # there; an op-amp's output current is *solved*, not substituted,

@@ -1419,8 +1419,19 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     else:
         shown = [_round_long_floats(str(f)) for f in e.turns]
     ratio = "{0} : {1}".format(*shown)
-    cv.text(mid, top - 9, ratio)
-    cv.runs(mid, top - 9 - LABEL_ASCENT - LABEL_GAP - _name_below(),
+    # The ratio sits between the two windings' upper leads, which are
+    # 2*TRANS_OFF apart: `1 : 2` fits, `80 : 80+120` does not and was
+    # printed through both leads (the pixel harness caught it on AS7's
+    # Example 13.11, 0.5px). A ratio wider than the gap goes above the
+    # node row instead, where the leads are horizontal and the nearest
+    # node name is a column away; the name follows it up.
+    est_w = 6.0 * len(ratio)          # 13px sans: `1 : 2` measures ~26px
+    if est_w > 2 * TRANS_OFF - 2 * _HALF - GAP:
+        ratio_y = y_top - _HALF - GAP - LABEL_DESCENT
+    else:
+        ratio_y = top - 9
+    cv.text(mid, ratio_y, ratio)
+    cv.runs(mid, ratio_y - LABEL_ASCENT - LABEL_GAP - _name_below(),
             _name_runs(e.name))
     if four:
         # the lower terminals, at the windings' feet, for the caller
