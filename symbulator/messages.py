@@ -194,8 +194,8 @@ CATALOGUE = {
                        "its voltages are undefined."),
     N_LOCAL_REFERENCE: ("warning",
                         "Node(s) %{nodes} have no path to node 0 (they lie "
-                        "behind a port), so their voltages are measured "
-                        "against %{ref}, taken as 0."),
+                        "behind a port or a coupling), so their voltages "
+                        "are measured against %{ref}, taken as 0."),
 
     # --- 3xx engine ---------------------------------------------------
     E_NO_STAMPING_RULE: ("error",

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.33 -- 7 Sep 2026 (#323: an island behind a coupling)
+
+### Changed
+- **The secondary of a coupled pair may float, like a transformer's.** An
+  inductor named by an `m` element counts as a coupling's terminal pair,
+  so a side of the circuit that reaches the rest only through the coupling
+  is an island of the legitimate kind (#322) and gets a reference of its
+  own -- the coil's second node -- with the same note, code 221, whose
+  text now says *behind a port or a coupling*. Nilsson & Riedel's
+  switching problems with coupled coils type as drawn. A dangling coil
+  that nothing couples is still floating.
+
 ## 0.5.32 -- 7 Sep 2026 (#320, #321, #322: ports that float)
 
 Three items from a reader's three problems (Alexander & Sadiku 19.2,

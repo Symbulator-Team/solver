@@ -632,6 +632,12 @@ def _islands(elements: List[Element], references: Sequence[str] = ()):
     order: List[str] = []           # every node, first-mention order
     port_terms: List[str] = []      # port terminals, first-mention order
     bottoms: List[str] = []         # port bottoms, first-mention order
+    # An inductor named by an `m` element is a coupling's terminal pair
+    # too (#323): the secondary of a coupled pair conducts nothing to
+    # the primary, exactly as a transformer's does, so its side is an
+    # island of the same legitimate kind. Its second node stands in for
+    # a port's bottom when a reference is chosen.
+    coupled = {n for el in elements if el.kind == "m" for n in el.fields[:2]}
 
     def find(x):
         parent.setdefault(x, x)
@@ -667,6 +673,12 @@ def _islands(elements: List[Element], references: Sequence[str] = ()):
             note(n)
         for n in nodes[1:]:
             union(nodes[0], n)
+        if el.kind == "l" and el.name in coupled:
+            for n in nodes:
+                if n not in port_terms:
+                    port_terms.append(n)
+            if len(nodes) > 1 and nodes[1] not in bottoms:
+                bottoms.append(nodes[1])
 
     # Only node 0 roots a piece. A caller's `references` are hints for
     # *which* node of an island to hold at 0, never a reason to treat
@@ -693,8 +705,8 @@ def local_references(elements: List[Element],
     behind a port (#322).
 
     An island -- a connected piece with no path to node 0 -- is what the
-    far side of a transformer or a parameter block is when nothing else
-    grounds it: a legitimate circuit whose absolute potentials are
+    far side of a transformer, a parameter block or a magnetically
+    coupled inductor (#323) is when nothing else grounds it: a legitimate circuit whose absolute potentials are
     undefined, though every current and every difference is not. Nodal
     analysis needs one reference per piece, so each island gets one:
     the first of `preferred` that lies in it (`port()` names the
