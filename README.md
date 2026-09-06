@@ -64,8 +64,8 @@ separated by `:`, fields within an element by `,`. Node `0` is ground.
 | `o` | ideal op-amp (nullor) | name,n_plus,n_minus,n_out |
 | `m` | mutual inductance | name,Lname1,Lname2,M |
 | `s` | short circuit | name,n1,n2 |
-| `t` | ideal transformer | name,n1,n2,turns1,turns2 |
-| `z,y,h,g,a,b` | grounded two-port block | name,n1,n2[,[p11,p12,p21,p22]] |
+| `t` | ideal transformer | name,n1,n2,turns1,turns2 · name,n1,n2,[turns1,turns2] · name,[tl,bl],[tr,br],[turns1,turns2] |
+| `z,y,h,g,a,b` | two-port block | name,n1,n2 · name,[tl,bl],[tr,br] — either followed by an optional [p11,p12,p21,p22] |
 
 The optional initial-condition field on `l`/`c` (initial inductor
 current / capacitor voltage) is only meaningful for `fd()`/`tr()`; it's
@@ -122,6 +122,39 @@ accepted:
 params = {"y1": {"11": "0.001", "12": "-0.001", "21": "-0.001", "22": "0.001"}}
 res = dc("e1,1,0,10:y1,1,2:rl,2,0,1'k", params=params)
 ```
+
+**All four terminals** (since 0.5.27). A transformer or two-port block
+has two ports of two terminals each. The forms above name the top
+terminal of each port and ground the other two, as the calculator did.
+Write a node term as a bracketed pair, `[top,bottom]`, and all four are
+named:
+
+```python
+# an ideal transformer between two live pairs; the secondary's side
+# must have its own path to ground (here r5), or it is reported floating
+res = dc("e,1,0,10:r0,1,2,1:t,[2,4],[3,5],[2,1]:r4,4,0,3:rl,3,5,100:r5,5,0,7")
+
+# an h-parameter stage with a resistor under its common terminal
+res = dc("e,1,0,0.01:rs,1,2,1000:h,[2,3],[4,3],[1000,2.5e-4,100,25e-6]:re,3,0,100:rc,4,0,2000")
+
+# the autotransformer as one tapped winding: the second winding's
+# bottom is the first winding's top
+res = ac("e,1,0,120:t,[1,0],[2,1],[80,120]:rl,2,0,8+6j", omega=1000)
+```
+
+Rules: a transformer's turns must be a pair `[N1,N2]` when its nodes are
+pairs (`t,n1,n2,[N1,N2]` is also accepted on the two-node form); either
+node of a pair may be `0`, so `z,[1,0],[2,0]` is `z,1,2` written out; a
+port with the same node at both terminals is refused; and the two ports
+never conduct across each other, so a side of the circuit with no path
+to node 0 is reported floating (code 217), as a dangling resistor is.
+
+**The currents.** A transformer or two-port reports the current
+*entering* it at each of its live terminals, `i_<name><node>` -- `i_t1`,
+`i_t2` for `t,1,2,80,200`; four of them for a paired form; one sum
+where a node is named at two terminals (a common bottom). Version 8
+reported both of a transformer's currents and the port had lost the
+secondary until 0.5.27.
 
 Use `port()` (below) to go the other way and *extract* z/y/h/g/a/b
 parameters from an actual sub-circuit.
@@ -336,6 +369,76 @@ pf(res["v_e"],  res["i_e"])          # pf: 0.97342 lagging   — backwards
 `pf()` takes raw values and cannot know whether they came from a source
 or a load, so it cannot do the flip for you (the calculator's version
 special-cased element *names* and could).
+
+## In a notebook (Jupyter, JupyterLab, Colab, VS Code)
+
+The package works in a notebook as it is -- every answer is a SymPy
+expression, so it typesets on its own -- and a few things are there to
+make it feel at home. To set up a local notebook in one line:
+
+```
+pip install symbulator[notebook]
+```
+
+The extra brings JupyterLab, NumPy and Matplotlib; the package itself
+needs only SymPy, so on Google Colab a plain `pip install symbulator`
+in the first cell is enough.
+
+**Results display as mathematics.** A bare `res` at the end of a cell
+shows every answer typeset, one aligned row each, with the analysis
+named above them; a Thevenin result shows its four values the same way
+and a `port()` result shows its 2×2 matrix. At a terminal the plain
+text form is unchanged. Long floats are the numbers as solved; for the
+app's *Rounding* setting use `res.rounded(4)` (exact integers stay as
+they are), and keep the unrounded result for arithmetic.
+
+```python
+from symbulator import dc, ac, th, draw
+
+res = dc("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
+res                      # the whole result, typeset
+res["v2"]                # one answer -- typeset too, since it is SymPy
+draw("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")     # the schematic, inline
+```
+
+**The tutorial's spellings work.** The book at learn.symbulator.com
+writes `ir1` and `v2`; the package has always stored `i_r1` and
+`v_2`. A `Result` now answers to either, so `res["ir1"]`,
+`res["v2"]` and `"pr1" in res` all do what a reader of the tutorial
+expects. Stored names are still the underscored ones (`list(res)`,
+`res.values`), and inside an *expression* -- an expert-mode equation
+or condition -- use the underscored form, `equations=["v_2 = 6"]`.
+
+**Phasors as magnitude and angle.** `polar()` is the app's `aa`
+mini-tool: `polar(res["v2"])` gives `9.939∠-6.34°`, rounded to four
+significant figures (pass `digits=None` for all of them), with
+`.magnitude` and `.angle` as the two numbers and `complex()` giving
+the value back.
+
+**A cell can be a circuit.** After `%load_ext symbulator`, a cell
+that starts with `%%dc` (or `%%ac`, `%%fd`, `%%tr`) takes the circuit
+one element per line, the way the app's Input File card does, draws
+it and shows the answers:
+
+```
+%%ac omega=1000 into=res
+e1,1,0,10
+r1,1,2,100
+l1,2,3,0.1
+c1,3,0,1e-6
+```
+
+Options go on the magic's line -- `omega=1000`, `rms`,
+`variables=v_2,i_r1`, `into=res` to bind the result to a name,
+`nodraw` to skip the drawing -- and are passed to the analysis
+function. Multi-line descriptions are accepted everywhere, so a circuit
+copied from the tutorial pastes straight in.
+
+**Plotting** is SymPy's `plot()` for a transient (with the package's
+own `t`, see the section above) and `bode_samples()` or
+`time_samples()` with Matplotlib for anything else. The repository's
+`notebooks/quickstart.ipynb` walks through all of this and can be
+opened in Colab.
 
 ## Expert mode: `ex()`
 

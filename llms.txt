@@ -31,6 +31,13 @@ on the first try and don't always fail loudly:
   silently does nothing. Use `res.at(t=...)` (substitutes by name), or
   `from symbulator import t` and substitute with the package's own symbol —
   see the README's "Working with the answers (SymPy)" section.
+- A transformer or two-port block names two nodes and grounds its other
+  two terminals (`t,1,2,80,200`, `z,1,2,[…]`), or names all four as
+  bracketed pairs, top then bottom (`t,[tl,bl],[tr,br],[N1,N2]`,
+  `z,[tl,bl],[tr,br],[…]`, since 0.5.27). A side that has no path of its
+  own to node 0 is reported floating — the ports never conduct across
+  each other. Each live terminal reports the current entering it,
+  `i_<name><node>`.
 - Names fold case, variables don't: `R1`/`r1` are one element and
   `2*VR1` ≡ `2*v_r1` (references derived from names fold too), but a
   plain variable is case-sensitive — `e,a,b,c` and `e,a,b,C` are
@@ -40,6 +47,7 @@ on the first try and don't always fail loudly:
 
 - [README.md](https://github.com/Symbulator/solver/blob/main/README.md): install, quick start, full circuit-description syntax table, DC/AC/s-domain/transient APIs, Thevenin/Norton (`th`/`er`), two-port extraction (`port`), and expert mode (`ex`, `equations=`/`unknowns=`/`conditions=`) — all with runnable examples.
 - [CHANGELOG.md](https://github.com/Symbulator/solver/blob/main/CHANGELOG.md): version history.
+- [notebooks/quickstart.ipynb](https://github.com/Symbulator/solver/blob/main/notebooks/quickstart.ipynb): the package in Jupyter, executed -- typeset results, the tutorial's `ir1`/`v2` spellings on a `Result`, `polar()`, `rounded()`, the `%%dc`/`%%ac`/`%%fd`/`%%tr` cell magics (`%load_ext symbulator`). The README's "In a notebook" section is the reference.
 - [symbulator/tests/](https://github.com/Symbulator/solver/tree/main/symbulator/tests): the test suite doubles as a large set of additional worked examples across every analysis mode, if the README's examples don't cover your case.
 
 ## Optional

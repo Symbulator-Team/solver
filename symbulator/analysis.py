@@ -43,17 +43,89 @@ class Result:
         """True when the circuit had more than one solution."""
         return len(self.solutions) > 1
 
+    # The quantity letters an answer name can start with, longest first
+    # so that `apr1` is read as `ap_r1` and not as `a` + `pr1`. Only
+    # these spellings are looked up; a user's own unknown (`pout`) is
+    # stored under its own name and found directly.
+    _QUANTITIES = ("ap", "i", "p", "r", "s", "v", "z")
+
+    def resolve(self, key: str) -> str:
+        """The stored name for `key`, which may be written either way
+        the tutorial and the package write it: `ir1` or `i_r1`, `v2` or
+        `v_2` (#315). The tutorial says `ir1`, the package has always
+        said `i_r1`, and the app accepts both; so does this. Raises
+        KeyError, naming what *was* solved for, when neither spelling
+        is an answer."""
+        if key in self.values:
+            return key
+        for q in self._QUANTITIES:
+            if key.startswith(q) and len(key) > len(q):
+                stored = f"{q}_{key[len(q):]}"
+                if stored in self.values:
+                    return stored
+        raise KeyError(f"{key!r} is not among the answers: "
+                       + ", ".join(sorted(self.values)))
+
     def __getitem__(self, key: str) -> sp.Expr:
-        """result["v_2"] -- direct lookup by variable name; raises KeyError
-        if that variable wasn't solved for (e.g. asking for a node that
-        doesn't exist, or a `tr()` variable that couldn't be inverse-
-        transformed)."""
-        return self.values[key]
+        """result["v_2"] or result["v2"] -- lookup by variable name, in
+        either spelling (see `resolve`); raises KeyError if that variable
+        wasn't solved for (e.g. asking for a node that doesn't exist, or
+        a `tr()` variable that couldn't be inverse-transformed)."""
+        return self.values[self.resolve(key)]
 
     def get(self, key: str, default=None):
         """Same as __getitem__ but returns `default` instead of raising
         when the key is missing."""
-        return self.values.get(key, default)
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __contains__(self, key) -> bool:
+        try:
+            self.resolve(key)
+        except (KeyError, TypeError, AttributeError):
+            return False
+        return True
+
+    def __iter__(self):
+        """The stored names, sorted -- `for k in res` and `list(res)`."""
+        return iter(sorted(self.values))
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def rounded(self, digits: int = 4) -> "Result":
+        """A copy with every number shown to `digits` significant
+        figures, the app's Rounding setting (#315): exact integers stay
+        as they are (a node at exactly 36 V reads 36, not 36.00);
+        rationals, floats and the coefficients inside a symbolic answer
+        go through SymPy's N(). Display only -- keep the original for
+        arithmetic."""
+        def rnd(expr):
+            if not isinstance(expr, sp.Basic) or expr.is_Integer:
+                return expr
+            try:
+                return sp.N(expr, digits)
+            except Exception:                              # noqa: BLE001
+                return expr
+        return Result(domain=self.domain,
+                      values={k: rnd(v) for k, v in self.values.items()},
+                      solutions=[{k: rnd(v) for k, v in sol.items()}
+                                 for sol in self.solutions])
+
+    def _repr_latex_(self) -> str:
+        """What a notebook shows for a bare `res`: every answer typeset,
+        one aligned row each, the domain named above them (#315). The
+        plain `__repr__` is what a terminal still gets."""
+        from ._display import aligned, name_latex, value_latex
+        caption = f"{self.domain} analysis"
+        if self.multiple:
+            caption += (f", {len(self.solutions)} solutions, showing the "
+                        "first (the others are in .solutions)")
+        rows = [(name_latex(k), value_latex(self.values[k]))
+                for k in sorted(self.values)]
+        return aligned(rows, caption)
 
     def v(self, node) -> sp.Expr:
         """Voltage at `node` (shorthand for result[f"v_{node}"])."""
@@ -82,7 +154,7 @@ class Result:
             return expr.subs(m) if m else expr
 
         if key is not None:
-            return sub(self.values[key])
+            return sub(self[key])
         return Result(domain=self.domain,
                       values={k: sub(v) for k, v in self.values.items()},
                       solutions=[{k: sub(v) for k, v in sol.items()}
@@ -261,7 +333,7 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
 def dc(desc: str, params: Optional[dict] = None, equations=None,
        unknowns=None, conditions=None, suffix: str = "ask") -> Result:
     """DC steady-state analysis. `desc` is a Symbulator-style circuit
-    description string, e.g. "e1,1,0,5:r1,1,2,1k:r2,2,0,1k".
+    description string, e.g. "e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k".
     `equations`/`unknowns`/`conditions` add expert-mode extras to the
     system before solving (see `solve_circuit`)."""
     return _run(desc, "dc", params=params, equations=equations,

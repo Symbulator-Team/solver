@@ -65,6 +65,41 @@ class TheveninResult:
         return (f"TheveninResult(domain={self.domain!r}, vth={self.vth}, "
                 f"ino={self.ino}, {z_label}={self.z}, pmax={self.pmax})")
 
+    def _repr_latex_(self) -> str:
+        """The four answers typeset for a notebook, labelled as the app's
+        Thevenin card labels them (#315)."""
+        from ._display import aligned, name_latex, value_latex
+        z_label = "req" if self.domain == "dc" else "zeq"
+        rows = [(name_latex(k), value_latex(v)) for k, v in
+                (("vth", self.vth), ("ino", self.ino),
+                 (z_label, self.z), ("pmax", self.pmax))]
+        caption = f"Thevenin / Norton equivalent, {self.domain}"
+        if self.note:
+            caption += f" ({self.note})"
+        return aligned(rows, caption)
+
+
+class PortResult(dict):
+    """What `port()` returns: the four parameters under the keys "11",
+    "12", "21", "22" -- a dict, as it always was, that a notebook shows
+    as the 2x2 matrix it is (#315). `kind` names the family."""
+
+    def __init__(self, kind: str, params: dict):
+        super().__init__(params)
+        self.kind = kind
+
+    def __repr__(self) -> str:
+        inner = ", ".join(f"{k}={self[k]}" for k in ("11", "12", "21", "22"))
+        return f"PortResult({self.kind!r}, {inner})"
+
+    def _repr_latex_(self) -> str:
+        from ._display import value_latex
+        cells = [[value_latex(self[k]) for k in row]
+                 for row in (("11", "12"), ("21", "22"))]
+        body = r" \\ ".join(" & ".join(r) for r in cells)
+        return (rf"$\displaystyle \mathbf{{{self.kind}}} = "
+                rf"\begin{{bmatrix}}{body}\end{{bmatrix}}$")
+
 
 _AWKWARD_NOTE = (
     "The short-circuit round could not be solved directly; the current was "
@@ -323,4 +358,4 @@ def port(desc: str, n1: str, n2: str, kind: str, domain: str = "dc", omega=None,
             p21 = sp.simplify(1 / z12)
             p22 = sp.simplify(z11 / z12)
 
-    return {"11": p11, "12": p12, "21": p21, "22": p22}
+    return PortResult(kind, {"11": p11, "12": p12, "21": p21, "22": p22})

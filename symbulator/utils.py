@@ -9,7 +9,7 @@ pair, which is the part of the original logic that generalizes cleanly.
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 
 import sympy as sp
 
@@ -63,3 +63,54 @@ def gain(v1: Union[str, sp.Expr], i1: Union[str, sp.Expr],
     ap = sp.simplify(sp.re(-av * sp.conjugate(ai)))
     zi = sp.simplify(v1 / i1)
     return {"Av": av, "Ai": ai, "Ap": ap, "Zi": zi}
+
+
+class Phasor:
+    """A complex number as a magnitude and an angle in degrees: what
+    `polar()` returns. Prints as `5∠53.13°` at a terminal and typeset in
+    a notebook; `.magnitude` and `.angle` are the two numbers, and
+    `complex(p)` gives the value back."""
+
+    def __init__(self, magnitude, angle):
+        self.magnitude = magnitude
+        self.angle = angle
+
+    def __iter__(self):
+        yield self.magnitude
+        yield self.angle
+
+    def __complex__(self):
+        return complex(sp.N(self.magnitude * sp.exp(sp.I * sp.rad(self.angle))))
+
+    def __repr__(self) -> str:
+        return f"{self.magnitude}\u2220{self.angle}\u00b0"
+
+    def _repr_latex_(self) -> str:
+        return (rf"$\displaystyle {sp.latex(self.magnitude)} \angle "
+                rf"{sp.latex(self.angle)}^\circ$")
+
+
+def polar(value: Union[str, sp.Expr, complex], digits: Optional[int] = 4) -> Phasor:
+    """A phasor as magnitude and angle in degrees -- the app's `aa`
+    mini-tool and version 7's `aa` (#315): `polar(3+4j)` is `5∠53.13°`.
+
+    `digits` rounds both numbers to that many significant figures, the
+    app's Rounding setting; pass None for full precision. A real value
+    still gets an angle, 0 or 180, and zero is 0∠0°. Raises ValueError
+    for a value that still holds free symbols -- the angle of
+    `r_b*vin/(r_a + r_b)` is not a number."""
+    z = value if isinstance(value, sp.Basic) else sp.sympify(value)
+    z = sp.simplify(z)
+    if z.free_symbols:
+        raise ValueError(f"polar() needs a number; {z} still has "
+                         f"{', '.join(sorted(map(str, z.free_symbols)))} in it")
+
+    def num(x):
+        # Evaluating from float inputs can leave a crumb of imaginary
+        # part behind ("19.36 + 0.e-13*I"): take the real part after.
+        return sp.re(sp.N(x, digits) if digits else sp.N(x))
+
+    z = sp.N(z)
+    magnitude = num(sp.Abs(z))
+    angle = sp.Integer(0) if z == 0 else num(sp.deg(sp.arg(z)))
+    return Phasor(magnitude, angle)

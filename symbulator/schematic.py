@@ -2594,6 +2594,25 @@ def draw(desc: str):
 #   jumper over the top, not as the diamond most textbooks print.
 #   Recognising a bridge as a diamond means special-casing the topology,
 #   which the interval stacking deliberately avoids.
+#   Considered again on 6 Sep 2026 -- deltas, wyes and diamonds as
+#   drawn motifs -- and declined by Roberto as not worth the effort.
+#   What was measured, for whenever it comes up again: every element
+#   here is horizontal or vertical, so a triangle needs angled bodies
+#   and label placement first; and the shape is not the signal. Of the
+#   330 built-in entries, 181 contain a three-element loop when ground
+#   may be a corner (every divider is one), 34 contain one avoiding
+#   ground, and only the 7 three-phase entries (Lesson 9 and the
+#   monograph) are drawn as a delta in their source -- the other 27
+#   are ordinary meshes the books draw as rectangles. A recogniser
+#   keyed on topology alone is right about one time in five. A
+#   signature of three grounded sources each feeding one corner of a
+#   triangle matches all 7 and none of the 27, but 7 is a sample. If
+#   it is ever built: fire only on that narrow signature and the exact
+#   five-element diamond, let a `.cir` key override, keep today's
+#   drawing as the fallback, and prove every unclaimed entry renders
+#   byte-identically. Scoring candidates by crossings and hops rejects
+#   bad pictures but cannot choose the meaningful one -- Example 12.11
+#   scores perfectly as a ladder and still does not read as three-phase.
 # * A coupled inductor carries one polarity dot, so an inductor coupled
 #   to two others with opposite signs cannot be drawn faithfully -- the
 #   dot convention itself has no notation for it. The caption still
