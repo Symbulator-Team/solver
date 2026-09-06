@@ -133,6 +133,35 @@ def test_polar_matches_the_aa_tool():
     assert abs(complex(p) - (3 + 4j)) < 1e-3
 
 
+def test_rounding_is_decimal_not_binary():
+    # -36.20493 is -36.20 at four figures; sp.N(x, 4) said -36.21 (#318)
+    from symbulator._display import round_sig
+    assert str(round_sig(sp.Float("-36.20493"), 4)) == "-36.20"
+    assert str(round_sig(sp.Float("2.350222"), 4)) == "2.350"
+    assert str(round_sig(sp.Rational(5, 2), 3)) == "2.50"
+    assert round_sig(sp.Integer(36), 4) == 36
+    # ties go away from zero, as a book prints them: 31.25 is 31.3
+    assert str(round_sig(sp.Rational(125, 4), 3)) == "31.3"
+    assert str(round_sig(sp.Float("-0.00585"), 2)) == "-0.0059"
+    assert str(round_sig(sp.Float("0.0001335"), 3)) == "0.000134"
+    # and the genuine misroundings the app's sp.N(x, 4) produced
+    assert str(round_sig(sp.Float("4.95049505"), 4)) == "4.950"
+    assert str(round_sig(sp.Float("-0.00990949807"), 4)) == "-0.009909"
+    assert str(round_sig(sp.Float("0.00121951") + sp.Float("0.0109756") * sp.I, 3)) == "0.00122 + 0.011*I"
+    x = sp.Symbol("x")
+    assert str(round_sig(sp.Float("1.23456") * x, 3)) == "1.23*x"
+    assert round_sig("text", 4) == "text"
+
+
+def test_polar_reads_the_monograph_current():
+    desc = ("ea1,na1,0,100:eb1,nb1,0,(100∠-120°):ec1,nc1,0,(100∠120°):"
+            "raa,na1,na2,1:rbb,nb1,nb2,1:rcc,nc1,nc2,1:"
+            "rac,na2,nc2,100+24*pi*j:rcb,nc2,nb2,100+24*pi*j:rba,nb2,na2,100+24*pi*j")
+    res = ac(desc, omega="omega")
+    assert repr(polar(res["iraa"])) == "2.350∠-36.20°"
+    assert repr(polar(res["vna2"] - res["vnb2"], 5)) == "169.94∠30.811°"
+
+
 def test_polar_edge_cases():
     assert repr(polar(0)) == "0∠0°"
     assert repr(polar(-2)) == "2.000∠180.0°"
