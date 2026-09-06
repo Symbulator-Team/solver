@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.5.27 -- unreleased
+## 0.5.28 -- 6 Sep 2026
+
+### Changed
+- **A bottom terminal that is the other port's top draws round the far
+  side (#314).** `t,[1,0],[2,1],[80,120]`, the autotransformer written
+  as one tapped winding, put its second winding's return along the
+  block's own top in 0.5.27. The lead now drops below the feet, runs
+  under the block and rises on the side its node lies, with a hop where
+  it crosses the grounded foot's drop. `_Layout.return_col` decides the
+  side for every four-terminal lead by the node's column, which also
+  gives a common bottom its one shared line.
+
+## 0.5.27 -- 6 Sep 2026
 
 ### Added
 - **A transformer or two-port block may name all four terminals

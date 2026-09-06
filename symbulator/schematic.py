@@ -1949,7 +1949,8 @@ class _Layout:
             left_col = (spacer_cols.get(lo - 1) or [None])[-1] if lo > 0 else 0
             right_col = (spacer_cols.get(hi) or [None])[0]
             self.port_return[e.name] = (left_col, right_col)
-            for node, c in ((lb, left_col), (rb, right_col)):
+            for node in (lb, rb):
+                c = self.return_col(e, node)
                 if node != "0" and c is not None and node in self.node_col:
                     nc = self.node_col[node]
                     stubs.append((min(nc, c), max(nc, c), 0))
@@ -2061,6 +2062,28 @@ class _Layout:
             self.op_lane[e.name] = lane
             taken.append((lo, hi, lane))
         self.max_op_lane = max(self.op_lane.values(), default=0)
+
+    def return_col(self, e: Element, node: str) -> Optional[int]:
+        """The spacer column through which a four-terminal block's lead
+        to bottom node `node` rises: the one on the side of the block
+        the node's own column lies on. Normally that is the side of the
+        port the node belongs to, since `_node_order` put it there --
+        but a bottom that is the *other* port's top (`t,[1,0],[2,1]`,
+        the autotransformer as one tapped winding) lies across the
+        block, and its lead goes round the far side rather than along
+        the block's own top."""
+        lc, rc = self.port_return.get(e.name, (None, None))
+        if node == "0" or node not in self.node_col:
+            return None
+        tl, tr = _port_tops(e)
+        lo = min(self.node_col[tl], self.node_col[tr])
+        hi = max(self.node_col[tl], self.node_col[tr])
+        nc = self.node_col[node]
+        if nc <= lo:
+            return lc
+        if nc >= hi:
+            return rc
+        return lc if (nc - lo) <= (hi - nc) else rc
 
     def gap_free(self, c: int) -> bool:
         """True when the node row between column c and column c+1
@@ -2302,42 +2325,53 @@ def _render(elements: List[Element]) -> str:
                 lc, rc = lay.port_return.get(e.name, (None, None))
                 (xl, low), (xr, low_r) = lows
                 low = max(low, low_r)
-                # A common bottom -- both ports returning to one live
-                # node -- is drawn once, on the left. The transformer's
-                # two feet are simply joined: a wire between them under
-                # the core says both windings return to the one node,
-                # which is what an autotransformer looks like in a book.
-                # The box hangs lower than its own terminals, so its two
-                # leads drop to one line under it and leave together,
-                # which crosses whatever hangs beside the block once
-                # rather than twice.
-                common = (lb == rb and lb != "0")
-                bus = low if e.kind == "t" else low + 22.0
-                for node, x, c, side in ((lb, xl, lc, "L"), (rb, xr, rc, "R")):
+                # Each lead rises through the spacer column on the side
+                # its node lies -- its own side normally, the far side
+                # when the node is across the block (a bottom that is
+                # the other port's top). A lead bound for the far side,
+                # and both leads when they share a side (a common
+                # bottom), travel along one line under the block: the
+                # transformer's is the line of its own feet, so a common
+                # bottom simply joins them, which is what an
+                # autotransformer looks like in a book; the box hangs
+                # lower than its terminals, so its line runs under it.
+                # One shared line, so whatever hangs beside the block is
+                # crossed once rather than twice.
+                # A far-side lead runs *below* the feet, since a foot on
+                # its way to the rail would otherwise read as joined to
+                # it; the crossing is then a hop on the foot's drop.
+                bus_shared = low if e.kind == "t" else low + 22.0
+                bus_far = low + 22.0
+                targets = {"L": lay.return_col(e, lb), "R": lay.return_col(e, rb)}
+                shared = (lb != "0" and rb != "0"
+                          and targets["L"] is not None
+                          and targets["L"] == targets["R"])
+                risen = set()
+                for node, x, side in ((lb, xl, "L"), (rb, xr, "R")):
                     if node == "0":
                         cv.wire(x, low, x, y_bot)
                         ground_x.append(x)
                         ground_marks.append(x)
                         continue
+                    c = targets[side]
                     if c is None or node not in lay.node_col:
-                        continue
-                    if common and side == "R":
-                        xs = lay.px(lc) if lc is not None else None
-                        if xs is None:
-                            continue
-                        cv.wire(x, low, x, bus)
-                        cv.wire(xs, bus, x, bus)
                         continue
                     xs = lay.px(c)
                     xn = lay.px(lay.node_col[node])
-                    if common:
+                    far = (c == lc) != (side == "L")
+                    if far or shared:
+                        bus = bus_far if far else bus_shared
                         cv.wire(x, low, x, bus)
-                        cv.wire(xs, bus, x, bus)
-                        cv.wire(xs, bus, xs, y_top)
+                        cv.wire(min(x, xs), bus, max(x, xs), bus)
+                        if c not in risen:
+                            cv.wire(xs, bus, xs, y_top)
                     else:
                         cv.wire(min(x, xs), low, max(x, xs), low)
-                        cv.wire(xs, low, xs, y_top)
-                    cv.wire(min(xs, xn), y_top, max(xs, xn), y_top)
+                        if c not in risen:
+                            cv.wire(xs, low, xs, y_top)
+                    if c not in risen:
+                        cv.wire(min(xs, xn), y_top, max(xs, xn), y_top)
+                        risen.add(c)
                 segs[e.name] = (xa, y_top, xb, y_top)
                 continue
             # Four terminals: these ground their own lower pair, so they

@@ -247,6 +247,11 @@ def test_spice_export_spans_the_named_pairs():
     "e1,1,0,10:z,[1,0],[2,3],[100,10,20,50]:rl,2,3,5:r3,3,0,1",
     "e1,1,0,10:z,[1,3],[2,3],[100,10,20,50]:r3,3,0,1:rl,2,0,5",
     "t1,[1,3],[2,4],[1,2]:e1,1,3,10:r3,3,0,1:rl,2,4,5:r4,4,0,2",
+    # a bottom that is the other port's top: the autotransformer as one
+    # tapped winding, whose lead goes round the far side of the block
+    "e,1,0,120:t,[1,0],[2,1],[80,120]:rl,2,0,8",
+    "e,1,0,10:z,[1,0],[2,3],[100,10,20,50]:rl,2,0,200:r3,3,0,20",
+    "e,1,0,0.01:rs,1,2,1000:h,[2,3],[4,3],[1000,2.5e-4,100,25e-6]:re,3,0,100:rc,4,0,2000",
 ])
 def test_drawer_draws_the_paired_forms(desc):
     svg = to_svg(desc)
