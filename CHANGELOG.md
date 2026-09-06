@@ -1,5 +1,14 @@
 # Changelog
 
+## unreleased
+
+### Changed
+- **A wide turns ratio is printed above the node row.** `80 : 80+120`
+  was set between the windings' upper leads, which are 38px apart, and
+  ran through both; the pixel harness caught it on AS7's Example 13.11
+  at 0.5px. A ratio estimated wider than that gap now goes above the
+  row, the name with it; `1 : 2` stays where it was.
+
 ## 0.5.28 -- 6 Sep 2026
 
 ### Changed
