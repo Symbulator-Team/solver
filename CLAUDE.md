@@ -21,14 +21,26 @@ checkout is installed over it:
 
     pip install -e .        # in the environment the server runs in
 
-Locally that is your virtualenv. On the `SymbulatorX` PythonAnywhere
-account it is `symbulator-venv`, and installing there means the deployed
-app stops tracking PyPI — a real decision, not a step to take absently.
+Locally that is `Application\vX\.venv` (X1, 6 Sep 2026 — X's own
+interpreter, so the machine's Python that version 9's dev server uses
+stays untouched). On the `symbulatorx` PythonAnywhere account it is
+`symbulator-venv`, and installing there means the deployed app stops
+tracking PyPI — Roberto took that decision on 6 Sep 2026 (X1 in
+`repos/local/NEXT_X.md` has the console commands).
 
-**Do not publish a second package to PyPI** as a first move. `symbulator`
-on PyPI is version 9's name and Roberto's to release. If an experiment
-needs a changed solver, install the checkout; only if that stops being
-enough is a separate name worth discussing with him.
+**This checkout's version carries a local label: `0.5.26+x1`.** It is
+version 9's release plus a PEP 440 local segment, so it satisfies the
+server's `symbulator>=0.5.26` pin, cannot be uploaded to PyPI, and
+`/healthz` shows which solver a site is running. Keep the label on a
+merge from 9 (it is X's line in `symbulator/__init__.py`) and bump it
+(`+x2`, …) when X's solver changes. The packaging test accepts the label.
+
+**Do not publish a second package to PyPI.** `symbulator` on PyPI is
+version 9's name and Roberto's to release, and he declined a
+`symbulatorx` distribution on 6 Sep 2026: under the same import name
+two packages would overwrite each other silently, and under a new
+import name every `from symbulator …` line would conflict on every
+merge from 9.
 
 ## Version 9 in, experiments out
 

@@ -193,7 +193,10 @@ def test_version_is_exposed_and_well_formed():
     import symbulator
     import re as _re
 
-    assert _re.fullmatch(r"\d+\.\d+\.\d+", symbulator.__version__)
+    # A bare x.y.z is a release; an optional PEP 440 local label
+    # (0.5.26+x1) marks a checkout that is not on PyPI (X1).
+    assert _re.fullmatch(r"\d+\.\d+\.\d+(\+[a-z0-9]+(\.[a-z0-9]+)*)?",
+                         symbulator.__version__)
 
 
 def test_version_matches_the_installed_distribution_when_there_is_one():
