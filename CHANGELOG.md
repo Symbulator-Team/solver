@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased -- #318, decimal rounding (6 Sep 2026)
+## 0.5.31 -- 6 Sep 2026 (#318, decimal rounding)
 
 ### Fixed
 - **`polar()` and `Result.rounded()` round in decimal, ties away from
