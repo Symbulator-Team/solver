@@ -437,8 +437,10 @@ copied from the tutorial pastes straight in.
 **Plotting** is SymPy's `plot()` for a transient (with the package's
 own `t`, see the section above) and `bode_samples()` or
 `time_samples()` with Matplotlib for anything else. The repository's
-`notebooks/quickstart.ipynb` walks through all of this and can be
-opened in Colab.
+`notebooks/quickstart.ipynb` walks through all of this, and
+`notebooks/the_monograph.ipynb` runs the exemplar circuits of *The
+Internal Logic of Symbulator*; both are executed, and both open in
+Colab.
 
 ## Expert mode: `ex()`
 

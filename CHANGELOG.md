@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.31 -- 6 Sep 2026 (#318, decimal rounding)
+
+### Fixed
+- **`polar()` and `Result.rounded()` round in decimal, ties away from
+  zero.** Both had used `sp.N(x, digits)`, which evaluates at a *binary*
+  working precision of about `digits` digits, so the last decimal digit
+  could land either side: the monograph's wye-delta line current came out
+  `2.350∠-36.21°` where the arithmetic and the book say `-36.20`. The
+  value is now evaluated at full precision, read at fifteen decimal
+  digits, and rounded with `decimal.ROUND_HALF_UP`, so `31.25` is `31.3`
+  as a book prints it (`symbulator._display.round_sig`). Measured over
+  the 2,269 numeric answers of the tutorial's rounded examples: the old
+  rule misrounded twelve of them.
+
 ## 0.5.30 -- 6 Sep 2026 (#315, the package in a notebook)
 
 ### Added

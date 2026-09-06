@@ -105,10 +105,15 @@ def polar(value: Union[str, sp.Expr, complex], digits: Optional[int] = 4) -> Pha
         raise ValueError(f"polar() needs a number; {z} still has "
                          f"{', '.join(sorted(map(str, z.free_symbols)))} in it")
 
+    from ._display import round_sig
+
     def num(x):
         # Evaluating from float inputs can leave a crumb of imaginary
         # part behind ("19.36 + 0.e-13*I"): take the real part after.
-        return sp.re(sp.N(x, digits) if digits else sp.N(x))
+        # Full precision first, then decimal rounding -- `sp.N(x, 4)`
+        # alone put this circuit's -36.20493° at -36.21 (#318).
+        x = sp.re(sp.N(x))
+        return round_sig(x, digits) if digits else x
 
     z = sp.N(z)
     magnitude = num(sp.Abs(z))

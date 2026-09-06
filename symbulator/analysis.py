@@ -102,13 +102,10 @@ class Result:
         rationals, floats and the coefficients inside a symbolic answer
         go through SymPy's N(). Display only -- keep the original for
         arithmetic."""
+        from ._display import round_sig
+
         def rnd(expr):
-            if not isinstance(expr, sp.Basic) or expr.is_Integer:
-                return expr
-            try:
-                return sp.N(expr, digits)
-            except Exception:                              # noqa: BLE001
-                return expr
+            return round_sig(expr, digits)
         return Result(domain=self.domain,
                       values={k: rnd(v) for k, v in self.values.items()},
                       solutions=[{k: rnd(v) for k, v in sol.items()}
