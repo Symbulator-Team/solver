@@ -370,6 +370,76 @@ pf(res["v_e"],  res["i_e"])          # pf: 0.97342 lagging   — backwards
 or a load, so it cannot do the flip for you (the calculator's version
 special-cased element *names* and could).
 
+## In a notebook (Jupyter, JupyterLab, Colab, VS Code)
+
+The package works in a notebook as it is -- every answer is a SymPy
+expression, so it typesets on its own -- and a few things are there to
+make it feel at home. To set up a local notebook in one line:
+
+```
+pip install symbulator[notebook]
+```
+
+The extra brings JupyterLab, NumPy and Matplotlib; the package itself
+needs only SymPy, so on Google Colab a plain `pip install symbulator`
+in the first cell is enough.
+
+**Results display as mathematics.** A bare `res` at the end of a cell
+shows every answer typeset, one aligned row each, with the analysis
+named above them; a Thevenin result shows its four values the same way
+and a `port()` result shows its 2×2 matrix. At a terminal the plain
+text form is unchanged. Long floats are the numbers as solved; for the
+app's *Rounding* setting use `res.rounded(4)` (exact integers stay as
+they are), and keep the unrounded result for arithmetic.
+
+```python
+from symbulator import dc, ac, th, draw
+
+res = dc("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
+res                      # the whole result, typeset
+res["v2"]                # one answer -- typeset too, since it is SymPy
+draw("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")     # the schematic, inline
+```
+
+**The tutorial's spellings work.** The book at learn.symbulator.com
+writes `ir1` and `v2`; the package has always stored `i_r1` and
+`v_2`. A `Result` now answers to either, so `res["ir1"]`,
+`res["v2"]` and `"pr1" in res` all do what a reader of the tutorial
+expects. Stored names are still the underscored ones (`list(res)`,
+`res.values`), and inside an *expression* -- an expert-mode equation
+or condition -- use the underscored form, `equations=["v_2 = 6"]`.
+
+**Phasors as magnitude and angle.** `polar()` is the app's `aa`
+mini-tool: `polar(res["v2"])` gives `9.939∠-6.34°`, rounded to four
+significant figures (pass `digits=None` for all of them), with
+`.magnitude` and `.angle` as the two numbers and `complex()` giving
+the value back.
+
+**A cell can be a circuit.** After `%load_ext symbulator`, a cell
+that starts with `%%dc` (or `%%ac`, `%%fd`, `%%tr`) takes the circuit
+one element per line, the way the app's Input File card does, draws
+it and shows the answers:
+
+```
+%%ac omega=1000 into=res
+e1,1,0,10
+r1,1,2,100
+l1,2,3,0.1
+c1,3,0,1e-6
+```
+
+Options go on the magic's line -- `omega=1000`, `rms`,
+`variables=v_2,i_r1`, `into=res` to bind the result to a name,
+`nodraw` to skip the drawing -- and are passed to the analysis
+function. Multi-line descriptions are accepted everywhere, so a circuit
+copied from the tutorial pastes straight in.
+
+**Plotting** is SymPy's `plot()` for a transient (with the package's
+own `t`, see the section above) and `bode_samples()` or
+`time_samples()` with Matplotlib for anything else. The repository's
+`notebooks/quickstart.ipynb` walks through all of this and can be
+opened in Colab.
+
 ## Expert mode: `ex()`
 
 A single dispatcher over `dc`/`ac`/`fd`/`tr`, for callers that want to

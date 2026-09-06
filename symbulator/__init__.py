@@ -17,6 +17,7 @@ inductance, ideal transformers, short circuits, and grounded two-port
     ex()                expert mode: choose the analysis at run time, and
                         add your own equations, unknowns and conditions
     pr(), pf(), gain()  power, power factor, transfer functions
+    polar()             a complex answer as magnitude and angle, 5∠53.13°
     time_samples()      numeric (t, y) samples of a tr() result, for plotting
     bode_samples()      numeric (freq, mag_dB, phase_deg) samples of a fd()
                         result across a frequency sweep, for a Bode plot
@@ -36,19 +37,30 @@ come back in terms of `x`.
 from .analysis import dc, ac, fd
 from .si_prefix import AmbiguousValueError, UnsafeExpressionError
 from .elements import find_ambiguous_values
-from .utils import pr, pf, gain
-from .equiv import th, er, port
+from .utils import pr, pf, gain, polar, Phasor
+from .equiv import th, er, port, PortResult, TheveninResult
+from .analysis import Result
 from .laplace import tr, t2s, s2t, t, s
 from .dispatch import ex
 from .plotting import time_samples, bode_samples, PlotError
 from .schematic import to_svg, draw
 from .spice import to_spice, from_spice
 
+
+def load_ipython_extension(ipython):
+    """`%load_ext symbulator` in a notebook: the `%%dc`, `%%ac`, `%%fd`
+    and `%%tr` cell magics, a circuit typed one element per line under
+    the magic the way the app's Input File card takes it (#315). See
+    `symbulator.notebook`."""
+    from .notebook import load_ipython_extension as load
+    load(ipython)
+
 #: The single source of truth for the version: pyproject.toml reads this
 #: attribute at build time, so the two cannot disagree.
 __version__ = "0.5.29"
 
 __all__ = ["dc", "ac", "fd", "tr", "t2s", "s2t", "t", "s", "pr", "pf", "gain", "th", "er", "port", "ex",
+           "polar", "Phasor", "Result", "TheveninResult", "PortResult", "load_ipython_extension",
            "time_samples", "bode_samples", "PlotError",
            "to_svg", "draw", "to_spice", "from_spice",
            "AmbiguousValueError", "UnsafeExpressionError", "find_ambiguous_values", "__version__"]

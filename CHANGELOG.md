@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased -- #315, the package in a notebook (6 Sep 2026)
+
+### Added
+- **Results typeset in a notebook.** A `Result`, a `TheveninResult`
+  and what `port()` returns carry `_repr_latex_`, so a bare `res` at
+  the end of a cell shows every answer as mathematics, one aligned row
+  each, the analysis named above; a port result is its 2×2 matrix.
+  The imaginary unit is written `j`, every infinity a plain ∞. The
+  plain `__repr__` at a terminal is unchanged.
+- **The tutorial's spellings.** `res["ir1"]`, `res["v2"]`,
+  `"pr1" in res` -- a `Result` answers to the book's names as well as
+  the underscored ones it stores (`Result.resolve`). A miss names the
+  answers that exist. `Result` also supports `in`, `iter` and `len`.
+- **`Result.rounded(digits)`** -- the app's Rounding setting, as a
+  copy for display; exact integers stay as they are.
+- **`polar()`** -- the app's `aa` mini-tool: a complex value as
+  magnitude and angle in degrees, `5∠53.13°`, returned as a `Phasor`
+  with `.magnitude`, `.angle` and `complex()` back.
+- **Cell magics.** `%load_ext symbulator`, then `%%dc`, `%%ac`,
+  `%%fd`, `%%tr` over a circuit typed one element per line: drawn,
+  solved and shown. Options on the magic's line (`omega=1000`, `rms`,
+  `variables=v_2,i_r1`, `into=res`, `nodraw`). IPython is imported
+  only when the extension is loaded.
+- **`PortResult`**, a dict subclass, is what `port()` returns; every
+  existing use (`params["11"]`) is unchanged.
+- **`pip install symbulator[notebook]`** brings JupyterLab, NumPy and
+  Matplotlib. `notebooks/quickstart.ipynb` walks through all of the
+  above, executed; the README gained an *In a notebook* section.
+
+### Fixed
+- `help(dc)` showed `r1,1,2,1k`, an example the package itself rejects
+  as ambiguous; it now says `1'k`.
+
 ## 0.5.29 -- 6 Sep 2026
 
 ### Changed

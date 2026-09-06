@@ -37,6 +37,10 @@ dependencies = [
 # and they import it lazily -- so it's an extra, not a hard dependency,
 # for everyone who just wants dc()/ac()/tr()/etc.
 plot = ["numpy>=1.24"]
+# Everything a notebook session wants: JupyterLab itself (which brings
+# the kernel), NumPy for the samplers and Matplotlib to plot them --
+# `pip install symbulator[notebook]`. The package imports none of these.
+notebook = ["jupyterlab>=4.0", "numpy>=1.24", "matplotlib>=3.7"]
 # test_plotting.py exercises the plot extra, so pull it in too.
 test = ["pytest>=7.0", "numpy>=1.24"]
 

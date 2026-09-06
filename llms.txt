@@ -47,6 +47,7 @@ on the first try and don't always fail loudly:
 
 - [README.md](https://github.com/Symbulator/solver/blob/main/README.md): install, quick start, full circuit-description syntax table, DC/AC/s-domain/transient APIs, Thevenin/Norton (`th`/`er`), two-port extraction (`port`), and expert mode (`ex`, `equations=`/`unknowns=`/`conditions=`) — all with runnable examples.
 - [CHANGELOG.md](https://github.com/Symbulator/solver/blob/main/CHANGELOG.md): version history.
+- [notebooks/quickstart.ipynb](https://github.com/Symbulator/solver/blob/main/notebooks/quickstart.ipynb): the package in Jupyter, executed -- typeset results, the tutorial's `ir1`/`v2` spellings on a `Result`, `polar()`, `rounded()`, the `%%dc`/`%%ac`/`%%fd`/`%%tr` cell magics (`%load_ext symbulator`). The README's "In a notebook" section is the reference.
 - [symbulator/tests/](https://github.com/Symbulator/solver/tree/main/symbulator/tests): the test suite doubles as a large set of additional worked examples across every analysis mode, if the README's examples don't cover your case.
 
 ## Optional
