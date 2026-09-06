@@ -128,6 +128,11 @@ def test_primary_node_repeated_at_another_terminal():
     v = dc("e1,1,0,10:r0,1,2,1:t1,[2,4],[3,2],[1,1]:r4,4,0,3:r1,3,0,10").values
     assert {"i_t12", "i_t13", "i_t14"} <= set(v)
     assert sp.simplify(v["i_t12"] + v["i_t13"] + v["i_t14"]) == 0
+    # the free unknown that stepped aside is the system's, not an answer
+    assert not any(k.endswith("_p1") for k in v)
+    v = dc("e,1,0,120:t,[1,0],[2,1],[80,120]:rl,2,0,8").values
+    assert not any(k.endswith("_p1") for k in v)
+    assert v["i_t1"] == sp.Rational(-1, 1) * v["i_e"]
 
 
 # --- the rules -------------------------------------------------------
