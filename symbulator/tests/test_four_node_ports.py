@@ -238,10 +238,29 @@ def test_spice_export_spans_the_named_pairs():
     assert "Ft1 2 0 Vi_t1" in net
 
 
-def test_drawer_refuses_the_paired_form_by_code():
-    with pytest.raises(CircuitError) as err:
-        to_svg("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,0,1")
-    assert err.value.code == M.E_DRAW_FOUR_NODE
-    # the two-node forms draw as before, bracketed turns included
-    assert "svg" in to_svg("e1,1,0,10:t1,1,2,1,2:r1,2,0,4")
-    assert "svg" in to_svg("e1,1,0,10:t1,1,2,[1,2]:r1,2,0,4")
+@pytest.mark.parametrize("desc", [
+    # every four-terminal shape the drawer has a placement for
+    "e1,1,0,10:r0,1,2,1:t1,[2,4],[3,5],[2,1]:r4,4,0,3:r1,3,5,100:r5,5,0,7",
+    "e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,0,1",
+    "e1,1,0,10:r0,1,2,1:t1,[2,3],[4,3],[80,120]:r3,3,0,5:rl,4,0,8",
+    "e1,1,0,10:r0,1,2,3:z,[2,4],[3,5],[100,10,20,50]:r4,4,0,2:rl,3,5,200:r5,5,0,9",
+    "e1,1,0,10:z,[1,0],[2,3],[100,10,20,50]:rl,2,3,5:r3,3,0,1",
+    "e1,1,0,10:z,[1,3],[2,3],[100,10,20,50]:r3,3,0,1:rl,2,0,5",
+    "t1,[1,3],[2,4],[1,2]:e1,1,3,10:r3,3,0,1:rl,2,4,5:r4,4,0,2",
+])
+def test_drawer_draws_the_paired_forms(desc):
+    svg = to_svg(desc)
+    assert "<svg" in svg and "</svg>" in svg
+
+
+def test_paired_form_with_grounded_bottoms_draws_as_two_node():
+    # `z,[1,0],[2,0]` is `z,1,2` written out and must draw the same:
+    # the rail cut at the block, two ground symbols and all.
+    two = to_svg("e1,1,0,10:z,1,2,[100,10,20,50]:rl,2,0,200")
+    four = to_svg("e1,1,0,10:z,[1,0],[2,0],[100,10,20,50]:rl,2,0,200")
+    assert two == four
+    two = to_svg("e1,1,0,10:t1,1,2,1,2:r1,2,0,4")
+    four = to_svg("e1,1,0,10:t1,[1,0],[2,0],[1,2]:r1,2,0,4")
+    assert two == four
+    # and the bracketed turns on the two-node form draw as the bare ones
+    assert two == to_svg("e1,1,0,10:t1,1,2,[1,2]:r1,2,0,4")

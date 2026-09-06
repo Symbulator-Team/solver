@@ -1220,7 +1220,7 @@ PORT_BOX_MARK = 30.0  # and how far past the box each ground symbol sits:
 
 
 def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
-                   y_top: float, y_bot: float) -> List[float]:
+                   y_top: float, y_bot: float, four: bool = False):
     """A two-port block: one box filling the band between the node row
     and the ground rail, with a terminal at each of its four corners.
 
@@ -1240,10 +1240,19 @@ def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
     mid = (xa + xb) / 2.0
     bx0, bx1 = mid - PORT_BOX_W / 2.0, mid + PORT_BOX_W / 2.0
     by0 = y_top - PORT_BOX_OVER
-    by1 = by0 + PORT_BOX_H
+    # With all four terminals named (#314, `four`) the block does not
+    # reach the rail: it stops 30px short of it, so the rail can pass
+    # beneath uncut and the lower leads can leave sideways above it --
+    # at 108px below the row, which is past the body of anything hanging
+    # in a neighbouring column (52..98), so a lead that crosses one
+    # crosses its wire, with a hop, never its symbol, and leaves room
+    # under the box for the common-bottom case's return wire. Otherwise
+    # the height is the whole band, as before.
+    box_h = (y_bot - 30.0 - by0) if four else PORT_BOX_H
+    by1 = by0 + box_h
     low = by1 - PORT_BOX_OVER          # the lower terminals' own line
     cv.raw('<rect x="{0:g}" y="{1:g}" width="{2:g}" height="{3:g}" '
-           'fill="none"/>'.format(bx0, by0, PORT_BOX_W, PORT_BOX_H),
+           'fill="none"/>'.format(bx0, by0, PORT_BOX_W, box_h),
            (bx0, by0), (bx1, by1))
     # The ink is the outline, not the area: the rect is `fill="none"`,
     # and its inside is the one piece of clear space on the drawing --
@@ -1263,11 +1272,12 @@ def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
     # tight drawing and adrift on a wide one; the midpoint is the same
     # gap on both sides however far apart the columns fall.
     legs = []
-    for x, node_x in ((bx0, min(xa, bx0)), (bx1, max(xb, bx1))):
-        out = (x + node_x) / 2.0
-        cv.wire(min(x, out), low, max(x, out), low)
-        cv.wire(out, low, out, y_bot)
-        legs.append(out)
+    if not four:
+        for x, node_x in ((bx0, min(xa, bx0)), (bx1, max(xb, bx1))):
+            out = (x + node_x) / 2.0
+            cv.wire(min(x, out), low, max(x, out), low)
+            cv.wire(out, low, out, y_bot)
+            legs.append(out)
 
     # The name, and then the four parameters under it -- the block's
     # whole behaviour, written where there is room for it. Nothing else
@@ -1280,6 +1290,9 @@ def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
     cv.runs(mid, top, _name_runs(e.name))
     for i, text in enumerate(params):
         cv.text(mid, top + (i + 1) * PORT_BOX_LINE, text)
+    if four:
+        # the lower terminals, on the faces, for the caller to route
+        return [(bx0, low), (bx1, low)]
     return legs
 
 
@@ -1313,10 +1326,17 @@ def _port_params(e: Element) -> List[str]:
 
 TRANS_OFF = 19.0     # each winding's axis, either side of the core
 TRANS_CORE = 2.5     # half the gap between the two core bars
+# How far below the node row a four-terminal transformer's windings
+# reach (#314): the coil body sits centred in that span, and the lower
+# leads turn sideways at its foot -- 32px above the rail, and past the
+# body of anything hanging in a neighbouring column (52..98 below the
+# row), so a lead that crosses one crosses its wire, with a hop, never
+# its symbol.
+TRANS_FOUR_SPAN = 118.0
 
 
 def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
-                      y_top: float, y_bot: float) -> List[float]:
+                      y_top: float, y_bot: float, four: bool = False):
     """An ideal transformer: two windings facing a core, with the
     polarity dots and the turns ratio.
 
@@ -1347,7 +1367,12 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     ideal transformer does not have."""
     mid = (xa + xb) / 2.0
     xp, xs = mid - TRANS_OFF, mid + TRANS_OFF
-    lead = (y_bot - y_top - BODY) / 2.0
+    # With all four terminals named (#314, `four`) the windings stop
+    # short of the rail, at `foot`, where their lower leads are routed
+    # sideways by the caller; the rail passes beneath. Otherwise they
+    # run the whole band down to it, as before.
+    foot = (y_top + TRANS_FOUR_SPAN) if four else y_bot
+    lead = (foot - y_top - BODY) / 2.0
     top, bot = y_top + lead, y_top + lead + BODY
 
     # The primary is mirrored about its own axis, so the two windings
@@ -1358,10 +1383,10 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     # mirror rather than one coil slid over.
     for x, flip in ((xp, " scale(1,-1)"), (xs, "")):
         cv.raw('<g transform="translate({0:g},{1:g}) rotate(90){3}">{2}</g>'
-               .format(x, y_top, _body_l(y_bot - y_top), flip),
+               .format(x, y_top, _body_l(foot - y_top), flip),
                (x - REACH["l"], top), (x + REACH["l"], bot))
         cv.ink(x - REACH["l"], top, x + REACH["l"], bot)
-        cv.eseg(x, y_top, x, y_bot, half=BODY / 2.0)
+        cv.eseg(x, y_top, x, foot, half=BODY / 2.0)
     cv.wire(min(xa, xp), y_top, xp, y_top)
     cv.wire(xs, y_top, max(xb, xs), y_top)
 
@@ -1392,12 +1417,14 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     if turns:
         shown = ["{0:g}".format(abs(t)) for t in turns]
     else:
-        shown = [_round_long_floats(str(e.fields[2])),
-                 _round_long_floats(str(e.fields[3]))]
+        shown = [_round_long_floats(str(f)) for f in e.turns]
     ratio = "{0} : {1}".format(*shown)
     cv.text(mid, top - 9, ratio)
     cv.runs(mid, top - 9 - LABEL_ASCENT - LABEL_GAP - _name_below(),
             _name_runs(e.name))
+    if four:
+        # the lower terminals, at the windings' feet, for the caller
+        return [(xp, foot), (xs, foot)]
     return [xp, xs]
 
 
@@ -1544,8 +1571,9 @@ def _node_order(elements: List[Element]) -> List[str]:
             for n in e.fields[:3]:
                 note(n)
         elif e.kind != "m":
-            note(e.n1)
-            note(e.n2)
+            # a port element's terminals: two, or four (#314)
+            for n in e.nodes:
+                note(n)
 
     def link(a: str, b: str) -> None:
         if a != "0" and b != "0" and a != b:
@@ -1572,7 +1600,15 @@ def _node_order(elements: List[Element]) -> List[str]:
         if e.kind == "o":
             link(e.fields[0], e.fields[1])
     for e in elements:
-        if e.kind not in ("m", "o"):
+        if e.kind in PORT_BLOCK or e.kind == "t":
+            # The two tops must be adjacent, as always -- the symbol
+            # spans between them -- and each bottom wants to sit beside
+            # its own top, which the reordering below then enforces.
+            (tl, bl), (tr, br) = e.port_nodes
+            link(tl, tr)
+            link(tl, bl)
+            link(tr, br)
+        elif e.kind not in ("m", "o"):
             link(e.n1, e.n2)
 
     # An op-amp's output node must land to the *right* of its inverting
@@ -1616,12 +1652,57 @@ def _node_order(elements: List[Element]) -> List[str]:
             for m in reversed(adj[n]):
                 if m not in visited:
                     stack.append(m)
+
+    # A four-terminal block's bottom nodes (#314) are drawn by leads
+    # that leave its lower terminals sideways, rise through a clear
+    # column beside the block and join their nodes on the row. That
+    # only reads cleanly when each bottom node's column is the one
+    # right beside its own top's, on the block's outer side -- so the
+    # walk's order is amended: the left port's bottom moves to just
+    # before its top, the right port's to just after. A bottom that is
+    # also one of the tops, or both bottoms the same node (a common
+    # terminal), takes the left side once.
+    for e in elements:
+        if _drawn_four(e):
+            (tl, bl), (tr, br) = e.port_nodes
+            if tl not in order or tr not in order:
+                continue
+            left, right = (tl, tr) if order.index(tl) < order.index(tr) \
+                else (tr, tl)
+            lb = bl if left == tl else br
+            rb = br if left == tl else bl
+            for node, side in ((lb, "L"), (rb, "R")):
+                if node == "0" or node in (tl, tr):
+                    continue
+                if side == "R" and node == lb:
+                    continue          # common bottom: placed once, left
+                order.remove(node)
+                at = order.index(left) if side == "L" else order.index(right) + 1
+                order.insert(at, node)
     return order
 
 
 def _ground_node(e: Element) -> str:
     """The non-ground terminal of a grounded two-terminal element."""
     return e.n2 if e.n1 == "0" else e.n1
+
+
+def _port_tops(e: Element) -> Tuple[str, str]:
+    """The two top terminals of a transformer or two-port block, in
+    either form -- the nodes its symbol spans between."""
+    (tl, _bl), (tr, _br) = e.port_nodes
+    return tl, tr
+
+
+def _drawn_four(e: Element) -> bool:
+    """Does this transformer or two-port want the four-terminal
+    drawing? Only when at least one of its bottoms is a live node:
+    `z,[1,0],[2,0]` is the two-node form written out and draws exactly
+    as `z,1,2` does, rail cut, two ground symbols and all (#314)."""
+    if not ((e.kind in PORT_BLOCK or e.kind == "t") and e.four_node):
+        return False
+    (_tl, bl), (_tr, br) = e.port_nodes
+    return bl != "0" or br != "0"
 
 
 def _op_up(e: Element) -> str:
@@ -1677,7 +1758,7 @@ class _Layout:
         for e in elements:
             if e.kind == "m":
                 continue
-            terms = e.fields[:3] if e.kind == "o" else [e.n1, e.n2]
+            terms = e.fields[:3] if e.kind == "o" else e.nodes
             for n in set(terms):
                 if n != "0":
                     usage.setdefault(n, []).append(e)
@@ -1793,16 +1874,33 @@ class _Layout:
         # proportion Roberto's reference has.
         idx_of = {n: k for k, n in enumerate(order)}
         spacer_after: Dict[int, int] = {}
+        # A four-terminal block (#314) also wants one clear column on
+        # each *outer* side: its lower terminals leave sideways and rise
+        # there to the node row, and that riser must not share a column
+        # with anything hanging in the band. `lead_spacer` is the case
+        # where the block's left top is the first node of all.
+        lead_spacer = 0
         for e in self.spanning:
             want = 1 if (e.kind in PORT_BLOCK or e.kind == "t") else 0
             if want:
-                a, b = idx_of.get(e.n1), idx_of.get(e.n2)
+                tl, tr = _port_tops(e)
+                a, b = idx_of.get(tl), idx_of.get(tr)
                 if a is not None and b is not None and abs(a - b) == 1:
                     k = min(a, b)
                     spacer_after[k] = max(spacer_after.get(k, 0), want)
+                if _drawn_four(e) and a is not None and b is not None:
+                    lo, hi = min(a, b), max(a, b)
+                    if lo == 0:
+                        lead_spacer = 1
+                    else:
+                        spacer_after[lo - 1] = max(spacer_after.get(lo - 1, 0), 1)
+                    spacer_after[hi] = max(spacer_after.get(hi, 0), 1)
 
-        col = 0
+        col = lead_spacer
         own_col: List[Tuple[str, Element]] = []   # (node, elem) pairs
+        # The spacer columns after each node index, in order -- the
+        # return leads of a four-terminal block rise through these.
+        spacer_cols: Dict[int, List[int]] = {}
         for i, n in enumerate(order):
             for e in pre.get(i, []):
                 self.elem_col[e.name] = col
@@ -1818,7 +1916,9 @@ class _Layout:
                 self.elem_col[e.name] = col
                 own_col.append((_ground_node(e), e))
                 col += 1
-            col += spacer_after.get(i, 0)
+            k = spacer_after.get(i, 0)
+            spacer_cols[i] = list(range(col, col + k))
+            col += k
         self.cols = max(col, 1)
 
         for n, e in at_node:
@@ -1828,6 +1928,31 @@ class _Layout:
         for n, e in own_col:
             a, b = self.node_col[n], self.elem_col[e.name]
             stubs.append((min(a, b), max(a, b), 0))
+
+        # Where each four-terminal block's return leads rise: the last
+        # spacer column before its left top, the first after its right
+        # top -- and the run along the node row from there to the
+        # bottom node's own column is a stub, so nothing else is placed
+        # on the row across it.
+        self.port_return: Dict[str, Tuple[Optional[int], Optional[int]]] = {}
+        for e in self.spanning:
+            if not _drawn_four(e):
+                continue
+            (tl, bl), (tr, br) = e.port_nodes
+            a, b = idx_of.get(tl), idx_of.get(tr)
+            if a is None or b is None:
+                continue
+            if a <= b:
+                lo, hi, lb, rb = a, b, bl, br
+            else:
+                lo, hi, lb, rb = b, a, br, bl
+            left_col = (spacer_cols.get(lo - 1) or [None])[-1] if lo > 0 else 0
+            right_col = (spacer_cols.get(hi) or [None])[0]
+            self.port_return[e.name] = (left_col, right_col)
+            for node, c in ((lb, left_col), (rb, right_col)):
+                if node != "0" and c is not None and node in self.node_col:
+                    nc = self.node_col[node]
+                    stubs.append((min(nc, c), max(nc, c), 0))
 
         # Each element between two live nodes occupies the interval
         # between their columns on whichever row it is drawn. Two
@@ -1843,8 +1968,11 @@ class _Layout:
         # elements are just the special case where the two intervals are
         # identical, so one rule covers both. Stubs out to a parallel
         # ground column are pre-placed on row 0 for the same reason.
-        spans = [(min(self.node_col[e.n1], self.node_col[e.n2]),
-                  max(self.node_col[e.n1], self.node_col[e.n2]), e)
+        def ends(e: Element) -> Tuple[str, str]:
+            return _port_tops(e) if (e.kind in PORT_BLOCK or e.kind == "t") \
+                else (e.n1, e.n2)
+        spans = [(min(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]),
+                  max(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]), e)
                  for e in self.spanning]
         # Narrow before wide: an interval nested inside another must end
         # up *below* it, so the outer element's risers drop past the
@@ -2149,8 +2277,69 @@ def _render(elements: List[Element]) -> str:
     for e in lay.spanning:
         lvl = lay.level[e.name]
         y = y_top - lvl * lay.stack_h
-        xa, xb = lay.px(lay.node_col[e.n1]), lay.px(lay.node_col[e.n2])
         if e.kind == "t" or e.kind in PORT_BLOCK:
+            tl, tr = _port_tops(e)
+            xa, xb = lay.px(lay.node_col[tl]), lay.px(lay.node_col[tr])
+            if _drawn_four(e):
+                # All four terminals named (#314). The symbol still
+                # spans between its two tops, but its lower terminals
+                # no longer reach the rail: each leaves its face
+                # sideways, rises through the clear column the layout
+                # kept beside the block, and joins its own node on the
+                # row. A bottom that is ground still drops to the rail
+                # as it always did. The two-node ground logic below is
+                # untouched -- this branch never cuts the rail and
+                # never asks for a symbol on it.
+                if e.kind == "t":
+                    lows = _draw_transformer(cv, e, xa, xb, y_top, y_bot,
+                                             four=True)
+                else:
+                    lows = _draw_port_box(cv, e, xa, xb, y_top, y_bot,
+                                          four=True)
+                (tl, bl), (tr, br) = e.port_nodes
+                left_first = lay.node_col[tl] <= lay.node_col[tr]
+                lb, rb = (bl, br) if left_first else (br, bl)
+                lc, rc = lay.port_return.get(e.name, (None, None))
+                (xl, low), (xr, low_r) = lows
+                low = max(low, low_r)
+                # A common bottom -- both ports returning to one live
+                # node -- is drawn once, on the left. The transformer's
+                # two feet are simply joined: a wire between them under
+                # the core says both windings return to the one node,
+                # which is what an autotransformer looks like in a book.
+                # The box hangs lower than its own terminals, so its two
+                # leads drop to one line under it and leave together,
+                # which crosses whatever hangs beside the block once
+                # rather than twice.
+                common = (lb == rb and lb != "0")
+                bus = low if e.kind == "t" else low + 22.0
+                for node, x, c, side in ((lb, xl, lc, "L"), (rb, xr, rc, "R")):
+                    if node == "0":
+                        cv.wire(x, low, x, y_bot)
+                        ground_x.append(x)
+                        ground_marks.append(x)
+                        continue
+                    if c is None or node not in lay.node_col:
+                        continue
+                    if common and side == "R":
+                        xs = lay.px(lc) if lc is not None else None
+                        if xs is None:
+                            continue
+                        cv.wire(x, low, x, bus)
+                        cv.wire(xs, bus, x, bus)
+                        continue
+                    xs = lay.px(c)
+                    xn = lay.px(lay.node_col[node])
+                    if common:
+                        cv.wire(x, low, x, bus)
+                        cv.wire(xs, bus, x, bus)
+                        cv.wire(xs, bus, xs, y_top)
+                    else:
+                        cv.wire(min(x, xs), low, max(x, xs), low)
+                        cv.wire(xs, low, xs, y_top)
+                    cv.wire(min(xs, xn), y_top, max(xs, xn), y_top)
+                segs[e.name] = (xa, y_top, xb, y_top)
+                continue
             # Four terminals: these ground their own lower pair, so they
             # never sit on a stacked level and never carry a single
             # series current the way a two-terminal element does.
@@ -2176,6 +2365,7 @@ def _render(elements: List[Element]) -> str:
                 port_spans.append((legs[0], legs[1]))
             segs[e.name] = (xa, y_top, xb, y_top)
             continue
+        xa, xb = lay.px(lay.node_col[e.n1]), lay.px(lay.node_col[e.n2])
         if lvl:
             # a stacked parallel branch: risers at each end back down to
             # the row the node actually lives on
@@ -2258,8 +2448,7 @@ def _render(elements: List[Element]) -> str:
     # 5. junction dots on the top row wherever three or more things meet
     touching: Dict[str, int] = {}
     for e in elements:
-        terms = e.fields[:3] if e.kind == "o" else (
-            [] if e.kind == "m" else [e.n1, e.n2])
+        terms = e.fields[:3] if e.kind == "o" else e.nodes
         for n in terms:
             touching[n] = touching.get(n, 0) + 1
     for n, count in touching.items():
@@ -2339,18 +2528,7 @@ def to_svg(desc: str) -> str:
     >>> "svg" in to_svg("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
     True
     """
-    elements = parse_circuit(desc, expand_si=False)
-    # The layout is one row of nodes over one ground rail, and both
-    # two-port symbols hang from the row to the rail -- which is what
-    # the two-node form means. A block whose bottom terminals are live
-    # nodes (#314) does not fit that picture, and drawing it as though
-    # they were ground would be a wrong drawing rather than none.
-    # Refused cleanly until the drawer has a symbol for it; the circuit
-    # still solves.
-    for e in elements:
-        if (e.kind in PORT_BLOCK or e.kind == "t") and e.four_node:
-            raise CircuitError(M.E_DRAW_FOUR_NODE, name=e.name)
-    return _render(elements)
+    return _render(parse_circuit(desc, expand_si=False))
 
 
 def draw(desc: str):

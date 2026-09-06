@@ -116,9 +116,6 @@ E_NO_SHORT_CIRCUIT    = 502
 E_SPICE_EMPTY         = 601
 E_SPICE_NOTHING       = 602
 
-# --- 7xx: schematic.py ------------------------------------------------
-E_DRAW_FOUR_NODE      = 701   # #314: no four-node symbol yet
-
 
 CATALOGUE = {
     # --- 2xx elements -------------------------------------------------
@@ -286,12 +283,6 @@ CATALOGUE = {
     E_SPICE_NOTHING: ("error",
                       "No translatable elements found in the SPICE "
                       "netlist. %{warnings}"),
-
-    # --- 7xx schematic ------------------------------------------------
-    E_DRAW_FOUR_NODE: ("error",
-                       "'%{name}' names four nodes. The schematic drawer "
-                       "draws a transformer or two-port only in its "
-                       "two-node form for now; the circuit still solves."),
 }
 
 

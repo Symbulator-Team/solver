@@ -29,10 +29,15 @@
   description's netlist is unchanged. Nine paired cases added to the
   ahkab ground truth.
 
-### Changed
-- The schematic drawer refuses a four-node transformer or two-port by
-  code (701) rather than drawing its bottoms as ground; the circuit
-  still solves.
+- **The schematic drawer draws the four-terminal forms.** The symbol
+  still spans between its two top nodes; each lower terminal leaves its
+  face sideways, rises through a clear column the layout keeps beside
+  the block, and joins its own node on the row, so the ground rail runs
+  beneath uncut. A bottom that is ground still drops to the rail; a
+  common bottom joins a transformer's two feet with one wire, and takes
+  a block's two leads to one line under the box; `z,[1,0],[2,0]` draws
+  exactly as `z,1,2`. The two-node drawing -- the rail cut at a block,
+  one ground symbol per run -- is untouched.
 
 ## 0.5.26 -- 1 Sep 2026
 
