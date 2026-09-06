@@ -33,6 +33,12 @@ class Result:
     # yields more than one; pin the root you mean with a condition such
     # as conditions=["e > 0"], or read the others from here.
     solutions: List[Dict[str, sp.Expr]] = field(default_factory=list)
+    # Anything the solve wants the reader told (#322): one entry per
+    # island that was given a reference of its own, as {code, args,
+    # severity, text} -- the shape the app's page already renders.
+    notes: List[dict] = field(default_factory=list)
+    # {reference node: the other nodes of its island}, for the same.
+    references: Dict[str, List[str]] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.solutions:
@@ -109,7 +115,8 @@ class Result:
         return Result(domain=self.domain,
                       values={k: rnd(v) for k, v in self.values.items()},
                       solutions=[{k: rnd(v) for k, v in sol.items()}
-                                 for sol in self.solutions])
+                                 for sol in self.solutions],
+                      notes=list(self.notes), references=dict(self.references))
 
     def _repr_latex_(self) -> str:
         """What a notebook shows for a bare `res`: every answer typeset,
@@ -122,6 +129,8 @@ class Result:
                         "first (the others are in .solutions)")
         rows = [(name_latex(k), value_latex(self.values[k]))
                 for k in sorted(self.values)]
+        for n in self.notes:
+            caption += "; " + n.get("text", "")
         return aligned(rows, caption)
 
     def v(self, node) -> sp.Expr:
@@ -155,7 +164,8 @@ class Result:
         return Result(domain=self.domain,
                       values={k: sub(v) for k, v in self.values.items()},
                       solutions=[{k: sub(v) for k, v in sol.items()}
-                                 for sol in self.solutions])
+                                 for sol in self.solutions],
+                      notes=list(self.notes), references=dict(self.references))
 
     def __repr__(self) -> str:
         """One line per solved variable, sorted by name, so a Result
@@ -167,6 +177,8 @@ class Result:
                          "the others are in .solutions")
         for k in sorted(self.values):
             lines.append(f"  {k} = {self.values[k]}")
+        for n in self.notes:
+            lines.append(f"  note: {n.get('text', '')}")
         return "\n".join(lines)
 
 
@@ -310,21 +322,37 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
 
 def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
          equations=None, unknowns=None, conditions=None,
-         suffix: str = "ask") -> Result:
+         suffix: str = "ask", references=()) -> Result:
     """Shared body of `dc()`/`ac()`/`fd()`: parse the circuit, solve it,
     add the derived quantities where they apply, and wrap the result.
     Kept as one function so the three public entry points stay tiny and
     can't drift out of sync with each other."""
-    elements = parse_circuit(desc)
+    elements = parse_circuit(desc, references=references)
     solutions = solve_circuit_all(elements, domain=domain, omega=omega, params=params,
                                   equations=equations, unknowns=unknowns,
-                                  conditions=conditions, suffix=suffix)
+                                  conditions=conditions, suffix=suffix,
+                                  references=references)
     if domain in ("dc", "ac"):
         # Matches the original: the power/impedance third-level derived
         # quantities are only computed for dc/ac, not for fd (s-domain).
         for solution in solutions:
             solution.update(_derived(elements, domain, solution, use_rms=use_rms))
-    return Result(domain=domain, values=solutions[0], solutions=solutions)
+    # An island behind a port was given a reference of its own (#322):
+    # its voltage is 0 by construction and is reported as an answer, so
+    # the list of node voltages is complete, and the reader is told.
+    from .elements import local_references
+    from . import messages as M
+    refs = local_references(elements, preferred=references)
+    notes = []
+    for ref, others in refs.items():
+        for solution in solutions:
+            solution.setdefault(f"v_{ref}", sp.Integer(0))
+        args = {"nodes": ", ".join([ref] + others), "ref": ref}
+        notes.append({"code": M.N_LOCAL_REFERENCE, "args": args,
+                      "severity": M.severity(M.N_LOCAL_REFERENCE),
+                      "text": M.render(M.N_LOCAL_REFERENCE, args)})
+    return Result(domain=domain, values=solutions[0], solutions=solutions,
+                  notes=notes, references=refs)
 
 
 def dc(desc: str, params: Optional[dict] = None, equations=None,

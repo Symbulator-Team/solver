@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.32 -- 7 Sep 2026 (#320, #321, #322: ports that float)
+
+Three items from a reader's three problems (Alexander & Sadiku 19.2,
+19.19 and 19.70), none of which has a grounded port.
+
+### Added
+- **`port()` takes a port as a node or a `[top,bottom]` pair (#320).**
+  `port(cir, "[a,f]", "[e,j]", "z")` extracts the parameters of a ladder
+  with resistors in both rails; the two-node form, `port(cir, "1", "2",
+  "z")`, is unchanged. Each test source sits across its own port, and the
+  port voltage is the difference of its two terminals. Grounding the
+  bottoms of a floating port solves a different circuit and returns
+  plausible, wrong numbers, which is what this exists to stop.
+- **An island behind a port gets a reference of its own (#322).** The far
+  side of a transformer or a parameter block that nothing grounds is a
+  legitimate circuit whose absolute potentials are undefined; until now
+  it was refused as floating. `Result.references` names the node held
+  at 0 for each such island (the first port bottom in it, or a caller's
+  preferred node -- `port()`, `th()` and `er()` name their ports'
+  terminals), `v_<ref>` is reported as 0, and `Result.notes` carries a
+  warning, code 221, saying which nodes are measured against which
+  reference. A dangling piece of ordinary elements is still refused.
+  `parse_circuit`, `solve_circuit` and `_run` take `references=`.
+- **Two parameter blocks that overlap in the drawing stack in lanes
+  (#321).** A parallel-series connection of two z blocks drew one box
+  through the other's parameters; blocks whose spans overlap now sit one
+  below the other, the lower one's upper terminals rising to the node
+  row, a block whose bottom is another's top drawn above it (the series
+  connection), and a block with another beneath it grounding at its own
+  faces. Cascades stay in a row. Transformers are unchanged.
+
+### Changed
+- A port whose two terminals are the same node, or a pair with more or
+  fewer than two entries, is a `ValueError` from `port()`.
+
 ## 0.5.31 -- 6 Sep 2026 (#318, decimal rounding)
 
 ### Fixed

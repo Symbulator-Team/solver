@@ -120,7 +120,7 @@ def _short_by_limit(desc, n1, n2, run_kwargs):
     whose `is_infinite` is None -- and that symbolic case is precisely the
     one this exists for.
     """
-    probe = _run(f"{desc}:rtest,{n1},{n2},x_test", **run_kwargs)
+    probe = _run(f"{desc}:rtest,{n1},{n2},x_test", references=[n2], **run_kwargs)
     current = probe.i("rtest")
 
     # Match the symbol by name rather than rebuilding it. A Symbol carries
@@ -170,7 +170,7 @@ def th(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
     the description."""
     n1, n2 = str(n1), str(n2)
 
-    open_circuit = _run(desc, domain, omega=omega, params=params,
+    open_circuit = _run(desc, domain, omega=omega, params=params, references=[n2],
                         use_rms=use_rms, equations=equations,
                         unknowns=unknowns, conditions=conditions,
                         suffix=suffix)
@@ -186,7 +186,8 @@ def th(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
     test_name = "stest"
     note = ""
     try:
-        short_circuit = _run(f"{desc}:{test_name},{n1},{n2}", **run_kwargs)
+        short_circuit = _run(f"{desc}:{test_name},{n1},{n2}", references=[n2],
+                             **run_kwargs)
         ino = sp.simplify(short_circuit.i(test_name))
     except Exception as short_failed:
         # The open-circuit round already answered half the question, and
@@ -226,7 +227,7 @@ def er(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
     circuits)."""
     n1, n2 = str(n1), str(n2)
     test_name = "jtest"
-    res = _run(f"{desc}:{test_name},{n2},{n1},1", domain, omega=omega,
+    res = _run(f"{desc}:{test_name},{n2},{n1},1", domain, omega=omega, references=[n2],
                params=params, equations=equations, unknowns=unknowns,
                conditions=conditions, suffix=suffix)
     return sp.simplify(_v(res, n1) - _v(res, n2))
@@ -235,12 +236,42 @@ def er(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
 _PORT_KINDS = ("z", "y", "h", "g", "a", "b")
 
 
+def _port_pair(n) -> tuple:
+    """(top, bottom) for one port of `port()` (#320).
+
+    A port is written either as one node name, its other terminal being
+    ground -- the calculator's form, `port(cir, 1, 2)` -- or as a
+    bracketed pair `[top,bottom]`, the same spelling a four-terminal
+    two-port *element* uses for its own ports since #314, for a network
+    whose ports float: a ladder with resistors in its lower rail, an
+    interconnection of blocks. A tuple or list of two names is the same
+    thing from Python."""
+    if isinstance(n, (tuple, list)):
+        parts = [str(x).strip() for x in n]
+    else:
+        text = str(n).strip()
+        if text.startswith("[") and text.endswith("]"):
+            parts = [x.strip() for x in text[1:-1].split(",")]
+        else:
+            parts = [text]
+    if len(parts) == 1:
+        return parts[0], "0"
+    if len(parts) != 2 or not all(parts):
+        raise ValueError(f"A port is one node or a [top,bottom] pair, not {n!r}.")
+    if parts[0] == parts[1]:
+        raise ValueError(f"A port cannot have the same node at both terminals: {n!r}.")
+    return parts[0], parts[1]
+
+
 def port(desc: str, n1: str, n2: str, kind: str, domain: str = "dc", omega=None,
          params: Optional[dict] = None, equations=None, unknowns=None,
          conditions=None, suffix: str = "ask") -> dict:
     """Extract the z/y/h/g/a/b two-port parameters of the circuit `desc`
-    between ports (`n1`, ground) and (`n2`, ground) -- ports `port()`.
-    Returns a dict with keys "11", "12", "21", "22".
+    between ports `n1` and `n2` -- ports `port()`. Each port is a node
+    name, its other terminal ground, or a `[top,bottom]` pair for a port
+    that floats (#320: `port(cir, "[a,f]", "[e,j]", "z")` for a ladder
+    with resistors in both rails). Returns a `PortResult`, a dict with
+    keys "11", "12", "21", "22".
 
     Uses one solve with symbolic test-source values (a current source
     at each port for z/a/b, a voltage source at each port for y, one of
@@ -250,7 +281,8 @@ def port(desc: str, n1: str, n2: str, kind: str, domain: str = "dc", omega=None,
     kind = kind.lower()
     if kind not in _PORT_KINDS:
         raise ValueError(f"Unknown two-port kind '{kind}'; must be one of {_PORT_KINDS}.")
-    n1, n2 = str(n1), str(n2)
+    (t1, b1), (t2, b2) = _port_pair(n1), _port_pair(n2)
+    n1, n2 = t1, t2
 
     # Two symbolic test values, one per port. Leaving them as free
     # symbols (rather than picking e.g. 1 A) is what lets a single solve
@@ -270,27 +302,32 @@ def port(desc: str, n1: str, n2: str, kind: str, domain: str = "dc", omega=None,
     # current, the other by voltage -- matching which of v/i each of
     # their four defining equations mixes (see the comments in
     # `engine._stamp_two_port` for the h/g defining equations).
+    # Each test source sits across its own port, bottom to top, so a
+    # port whose bottom is not ground is driven exactly as the
+    # definition drives it (#320); with the bottoms on "0" this is the
+    # stamp it always was.
     if kind in ("z", "a", "b"):
-        test = f"jtest1,0,{n1},{x1}:jtest2,0,{n2},{x2}"
+        test = f"jtest1,{b1},{t1},{x1}:jtest2,{b2},{t2},{x2}"
         i1_of = lambda res: res.i("jtest1")
         i2_of = lambda res: res.i("jtest2")
     elif kind == "y":
-        test = f"etest1,{n1},0,{x1}:etest2,{n2},0,{x2}"
+        test = f"etest1,{t1},{b1},{x1}:etest2,{t2},{b2},{x2}"
         i1_of = lambda res: -res.i("etest1")
         i2_of = lambda res: -res.i("etest2")
     elif kind == "h":
-        test = f"jtest1,0,{n1},{x1}:etest2,{n2},0,{x2}"
+        test = f"jtest1,{b1},{t1},{x1}:etest2,{t2},{b2},{x2}"
         i1_of = lambda res: res.i("jtest1")
         i2_of = lambda res: -res.i("etest2")
     else:  # g
-        test = f"etest1,{n1},0,{x1}:jtest2,0,{n2},{x2}"
+        test = f"etest1,{t1},{b1},{x1}:jtest2,{b2},{t2},{x2}"
         i1_of = lambda res: -res.i("etest1")
         i2_of = lambda res: res.i("jtest2")
 
     res = _run(f"{desc}:{test}", domain, omega=omega, params=params,
                equations=equations, unknowns=unknowns, conditions=conditions,
-               suffix=suffix)
-    V1, V2 = _v(res, n1), _v(res, n2)
+               suffix=suffix, references=[b1, b2])
+    V1 = _v(res, t1) - _v(res, b1)
+    V2 = _v(res, t2) - _v(res, b2)
     I1, I2 = i1_of(res), i2_of(res)
 
     def ratio(expr, zero_sym, divisor):

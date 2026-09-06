@@ -137,22 +137,35 @@ def test_primary_node_repeated_at_another_terminal():
 
 # --- the rules -------------------------------------------------------
 
-def test_secondary_side_with_no_ground_is_floating():
-    with pytest.raises(CircuitError) as err:
-        dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4")
-    assert err.value.code == M.E_FLOATING_NODES
-    # ...and it is the whole side, not the element: hanging more on it
-    # does not help until something reaches 0
-    with pytest.raises(CircuitError) as err:
-        dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,6,1:r3,6,2,1")
-    assert err.value.code == M.E_FLOATING_NODES
-    # grounding any node of that side settles it
-    dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,0,1")
+def test_secondary_side_with_no_ground_gets_its_own_reference():
+    # #322 (Roberto, 7 Sep 2026): a side with no path to 0 is not a
+    # mistake -- it is the far side of a port -- so it is given a
+    # reference of its own, the port's bottom, and the answers say so.
+    # Until #322 this raised E_FLOATING_NODES.
+    res = dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4")
+    assert res.references == {"3": ["2"]}
+    assert res["v_3"] == 0 and res["v_2"] == 20 and res["i_r1"] == 5
+    assert res.notes and res.notes[0]["code"] == M.N_LOCAL_REFERENCE
+    assert res.notes[0]["args"] == {"nodes": "3, 2", "ref": "3"}
+    assert res.notes[0]["severity"] == "warning"
+    # the whole side is one island, however much hangs on it
+    res = dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,6,1:r3,6,2,1")
+    assert set(res.references["3"]) == {"2", "6"}
+    # grounding any node of that side settles it as before, with no note
+    res = dc("e1,1,0,10:t1,[1,0],[2,3],[1,2]:r1,2,3,4:r2,3,0,1")
+    assert res.references == {} and res.notes == []
 
 
-def test_two_port_side_with_no_ground_is_floating():
+def test_two_port_side_with_no_ground_gets_its_own_reference():
+    res = dc("e1,1,0,10:z,[1,0],[2,3],[100,10,20,50]:rl,2,3,5")
+    assert res.references == {"3": ["2"]}
+    # the load's drop is still i*R, measured against the island's own 0
+    assert sp.simplify(res["v_2"] - res["v_3"] - 5 * res["i_rl"]) == 0
+
+
+def test_an_island_of_ordinary_elements_is_still_a_mistake():
     with pytest.raises(CircuitError) as err:
-        dc("e1,1,0,10:z,[1,0],[2,3],[100,10,20,50]:rl,2,3,5")
+        dc("e1,1,0,5:r1,1,0,1:r2,2,3,1")
     assert err.value.code == M.E_FLOATING_NODES
 
 

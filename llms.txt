@@ -38,6 +38,13 @@ on the first try and don't always fail loudly:
   own to node 0 is reported floating — the ports never conduct across
   each other. Each live terminal reports the current entering it,
   `i_<name><node>`.
+- A port of `port()` is a node name (its other terminal ground) or a
+  `[top,bottom]` pair for a port that floats (since 0.5.32); grounding the
+  bottoms of a floating port solves a different circuit. A side of the
+  circuit with no path to node 0 behind a transformer or parameter block
+  gets a reference of its own, reported in `Result.references` and
+  `Result.notes` (code 221); an island of ordinary elements is still an
+  error.
 - Names fold case, variables don't: `R1`/`r1` are one element and
   `2*VR1` ≡ `2*v_r1` (references derived from names fold too), but a
   plain variable is case-sensitive — `e,a,b,c` and `e,a,b,C` are

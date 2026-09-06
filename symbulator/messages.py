@@ -82,6 +82,7 @@ E_FLOATING_NODES      = 217
 E_PORT_SAME_NODE      = 218   # #314: a port shorted on itself
 E_TERMS_TRANSFORMER   = 219   # #314: a transformer's three forms
 E_PORT_PAIR           = 220   # #314: node terms both bare or both pairs
+N_LOCAL_REFERENCE     = 221   # #322: an island behind a port, its own reference
 
 # --- 3xx: engine.py ---------------------------------------------------
 E_NO_STAMPING_RULE    = 301
@@ -191,6 +192,10 @@ CATALOGUE = {
                        "Node(s) %{nodes} have no path to the reference "
                        "node 0; that part of the circuit is floating and "
                        "its voltages are undefined."),
+    N_LOCAL_REFERENCE: ("warning",
+                        "Node(s) %{nodes} have no path to node 0 (they lie "
+                        "behind a port), so their voltages are measured "
+                        "against %{ref}, taken as 0."),
 
     # --- 3xx engine ---------------------------------------------------
     E_NO_STAMPING_RULE: ("error",
