@@ -8,7 +8,7 @@ forms; none of them has a grounded port."""
 import sympy as sp
 import pytest
 
-from symbulator import dc, port, th, er, tr, s
+from symbulator import dc, port, th, er, tr, s, t
 from symbulator import messages as M
 from symbulator.elements import CircuitError, local_references, parse_circuit
 from symbulator.equiv import _port_pair
@@ -114,6 +114,20 @@ def test_local_references_prefers_the_callers_node_then_a_bottom():
     assert local_references(els) == {"m": ["q", "n"]}
     assert local_references(els, preferred=["n"]) == {"n": ["q", "m"]}
     assert local_references(els, preferred=["zz", "q"]) == {"q": ["m", "n"]}
+
+
+def test_island_behind_a_coupling_gets_the_coils_second_node_as_reference():
+    # #323: the secondary of a coupled pair, Nilsson & Riedel's 60 V
+    # problem after the switch -- typed as drawn, no ground on that side
+    res = tr("r3,0,2,3:l1,2,0,2,5:l2,3,4,8,0:r2,3,5,2:r10,5,4,10:m,l1,l2,2")
+    assert res.references == {"4": ["3", "5"]}
+    assert sp.simplify(res["il1"] - sp.Rational(5, 2) * (sp.exp(-t) + sp.exp(-3 * t))) == 0
+    assert sp.simplify(res["il2"] - sp.Rational(5, 4) * (sp.exp(-t) - sp.exp(-3 * t))) == 0
+    assert "coupling" in res.notes[0]["text"]
+    # a dangling coil that nothing couples is still floating
+    with pytest.raises(CircuitError) as err:
+        dc("e1,1,0,5:r1,1,0,1:l9,2,3,1")
+    assert err.value.code == M.E_FLOATING_NODES
 
 
 def test_a_groundless_ladder_needs_a_caller_to_name_a_reference():
