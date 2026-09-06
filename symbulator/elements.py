@@ -22,9 +22,23 @@ first character of an element's name selects its type:
     m  mutual inductance          name,Lname1,Lname2,M
     s  short circuit               name,n1,n2
     t  ideal transformer            name,n1,n2,turns1,turns2
-    z,y,h,g,a,b  grounded two-port block     name,n1,n2
+                                 or name,n1,n2,[turns1,turns2]
+                                 or name,[tl,bl],[tr,br],[turns1,turns2]
+    z,y,h,g,a,b  two-port block     name,n1,n2[,[p11,p12,p21,p22]]
+                                 or name,[tl,bl],[tr,br][,[p11,p12,p21,p22]]
 
 Node "0" is the ground/reference node.
+
+A transformer and a two-port block have two ports, and each port has
+two terminals. The calculator's form names the *top* terminal of each
+port -- n1 on the left, n2 on the right -- and grounds the other two.
+Since #314 (6 Sep 2026) a node term may be a bracketed pair,
+[top,bottom], and then all four terminals are named: [tl,bl] is the
+left port, [tr,br] the right. The two-node form is the paired form with
+both bottoms on 0, and the engine treats it exactly so. The transformer's
+turns may be written as a pair too, [turns1,turns2], and must be when
+the nodes are pairs. Brackets mean exactly these things, a resistor's
+parallel shorthand, and nothing else (#165).
 """
 
 from __future__ import annotations
@@ -64,7 +78,49 @@ FIELD_COUNTS = {
 OPTIONAL_IC_KINDS = {"l", "c"}
 
 TWO_PORT_KINDS = set("zyghab")
-GROUNDED_ELEMENT_KINDS = set("tzyghab")  # neither node may be "0"
+# The two-port elements: a transformer and the six parameter blocks.
+# In their two-node form these ground their own lower terminals, so the
+# circuit is grounded by their presence and neither named node may be
+# "0". In the paired form (#314) they ground nothing and name their
+# bottoms themselves; `Element.four_node` says which form an element
+# took, and the checks below ask it rather than the kind alone.
+PORT_KINDS = set("tzyghab")
+GROUNDED_ELEMENT_KINDS = PORT_KINDS   # kept for readers of the old name
+
+
+def _pair_entries(text: str) -> Optional[List[str]]:
+    """The entries of a bracketed term, or None when `text` is not one.
+
+    By the time a field exists, `expand_shorthand` has rewritten the
+    typed `[a,b]` to `pr(a,b)`, its one internal encoding of brackets;
+    the app also appends a literal `[...]` when it materialises a
+    two-port's tacit parameter term, so both spellings are read. Splits
+    on top-level commas only, so `[1'k,pr(2,2)]` stays two entries."""
+    if text is None:
+        return None
+    t = text.strip()
+    if t.startswith("pr(") and t.endswith(")"):
+        inner = t[3:-1]
+    elif t.startswith("[") and t.endswith("]"):
+        inner = t[1:-1]
+    else:
+        return None
+    parts: List[str] = []
+    depth, current = 0, ""
+    for ch in inner:
+        if ch == "(":
+            depth += 1
+            current += ch
+        elif ch == ")":
+            depth -= 1
+            current += ch
+        elif ch == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += ch
+    parts.append(current.strip())
+    return parts
 
 from . import messages as M
 
@@ -148,6 +204,68 @@ class Element:
         if self.kind in OPTIONAL_IC_KINDS and len(self.fields) >= 4:
             return self.fields[3]
         return "0"
+
+    # -- the two-port elements: transformer and parameter blocks (#314) --
+
+    @property
+    def four_node(self) -> bool:
+        """True when a transformer or two-port block names all four of
+        its terminals as two bracketed pairs; False for the calculator's
+        two-node form, whose lower terminals are ground."""
+        return (self.kind in PORT_KINDS and len(self.fields) >= 2
+                and _pair_entries(self.fields[0]) is not None)
+
+    @property
+    def port_nodes(self):
+        """((top_left, bottom_left), (top_right, bottom_right)) for a
+        transformer or two-port block -- the two terminals of each port,
+        with "0" standing in for the bottoms of the two-node form. None
+        for every other kind."""
+        if self.kind not in PORT_KINDS:
+            return None
+        if self.four_node:
+            left = _pair_entries(self.fields[0])
+            right = _pair_entries(self.fields[1]) or [self.fields[1], "0"]
+            return ((left[0], left[1] if len(left) > 1 else "0"),
+                    (right[0], right[1] if len(right) > 1 else "0"))
+        return ((self.fields[0], "0"), (self.fields[1], "0"))
+
+    @property
+    def nodes(self) -> List[str]:
+        """Every node this element touches, by name, in the order
+        written: a port element's four (or two) terminals, an op-amp's
+        three, everything else's two. A mutual inductance names
+        inductors rather than nodes and answers with an empty list."""
+        if self.kind == "m":
+            return []
+        if self.kind in PORT_KINDS:
+            (tl, bl), (tr, br) = self.port_nodes
+            out = [tl, tr] if not self.four_node else [tl, bl, tr, br]
+            return out
+        return [self.fields[i] for i in _IDENTIFIER_FIELD_IDX.get(self.kind, ())
+                if i < len(self.fields)]
+
+    @property
+    def turns(self):
+        """(turns1, turns2) as typed, for a transformer: the two bare
+        fields after the nodes, or the entries of the bracketed pair.
+        None for every other kind."""
+        if self.kind != "t":
+            return None
+        if len(self.fields) >= 4:
+            return (self.fields[2], self.fields[3])
+        pair = _pair_entries(self.fields[2]) if len(self.fields) > 2 else None
+        if pair and len(pair) == 2:
+            return (pair[0], pair[1])
+        return None
+
+    @property
+    def param_idx(self) -> Optional[int]:
+        """Index of a two-port block's parameter term, or None when it
+        carries none: the third field, after the two node terms."""
+        if self.kind in TWO_PORT_KINDS and len(self.fields) == 3:
+            return 2
+        return None
 
 
 # Field indices (0-based, *after* the element name) that hold structural
@@ -277,15 +395,28 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
         # rewritten to pr(...), and a pr(...) the user *typed* is a
         # legitimate function call, allowed anywhere.
         if typed != raw and ("[" in typed or "]" in typed):
-            value_term = 3 if (kind == "r" or kind in TWO_PORT_KINDS) else None
+            # Where brackets may appear (#165, widened by #314): a
+            # resistor's value; a two-port's parameter term (part 3);
+            # a transformer's turns (part 3); and, for both port kinds,
+            # the two node terms (parts 1 and 2) as [top,bottom] pairs.
+            if kind == "r":
+                bracket_ok = {3}
+            elif kind in PORT_KINDS:
+                bracket_ok = {1, 2, 3}
+            else:
+                bracket_ok = set()
             for i, tp in enumerate(typed_parts):
-                if ("[" in tp or "]" in tp) and i != value_term:
+                if ("[" in tp or "]" in tp) and i not in bracket_ok:
                     raise CircuitError(M.E_BRACKETS_MISUSED,
                                        value=typed.strip())
 
         expected = FIELD_COUNTS[kind]
         if kind in OPTIONAL_IC_KINDS or kind in TWO_PORT_KINDS:
             allowed = {expected, expected + 1}
+        elif kind == "t":
+            # name,n1,n2,N1,N2 -- or the turns as one bracketed pair,
+            # name,n1,n2,[N1,N2] and name,[tl,bl],[tr,br],[N1,N2] (#314).
+            allowed = {expected, expected - 1}
         else:
             allowed = {expected}
         if len(parts) not in allowed:
@@ -297,6 +428,9 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
                 raise CircuitError(M.E_TERMS_TWO_PORT, name=name,
                                    got=len(parts), expected=expected,
                                    expected_params=expected + 1)
+            if kind == "t":
+                raise CircuitError(M.E_TERMS_TRANSFORMER, name=name,
+                                   got=len(parts))
             raise CircuitError(M.E_TERMS_EXACT, name=name, got=len(parts),
                                expected=expected, kind=kind)
 
@@ -313,12 +447,45 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
                       else [])
         element = Element(name=name, kind=kind, fields=fields,
                           raw_fields=raw_fields)
+        if kind in PORT_KINDS:
+            _validate_port_forms(element)   # node pairs and turns (#314)
         if kind in TWO_PORT_KINDS and len(fields) == 3:
             two_port_param_texts(element)   # validates; raises if malformed
         elements.append(element)
 
     _validate_topology(elements)
     return elements
+
+
+def _validate_port_forms(el: Element) -> None:
+    """The shapes a transformer or two-port block may take (#314).
+
+    The two node terms are both bare names, or both bracketed pairs
+    [top,bottom] with exactly two entries; one of each is refused. A
+    transformer's turns are two bare values after bare nodes, or one
+    bracketed pair [N1,N2]; paired nodes require the paired turns, so
+    the four-node form is written one way only."""
+    left = _pair_entries(el.fields[0])
+    right = _pair_entries(el.fields[1])
+    if (left is None) != (right is None):
+        raise CircuitError(M.E_PORT_PAIR, name=el.name)
+    if left is not None:
+        for pair in (left, right):
+            if len(pair) != 2 or any(p == "" for p in pair):
+                raise CircuitError(M.E_PORT_PAIR, name=el.name)
+    if el.kind == "t":
+        if len(el.fields) == 4:
+            # bare turns: neither may be a bracket, and the nodes must be
+            # bare too -- `t,[a,b],[c,d],1,2` is not one of the forms
+            if left is not None or any(_pair_entries(f) is not None
+                                       for f in el.fields[2:4]):
+                raise CircuitError(M.E_TERMS_TRANSFORMER, name=el.name,
+                                   got=len(el.fields) + 1)
+        else:
+            pair = _pair_entries(el.fields[2])
+            if pair is None or len(pair) != 2 or any(p == "" for p in pair):
+                raise CircuitError(M.E_TERMS_TRANSFORMER, name=el.name,
+                                   got=len(el.fields) + 1)
 
 
 def two_port_param_texts(el: Element) -> Optional[List[str]]:
@@ -400,20 +567,33 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
     n1_target, n2_target = (two_port_nodes or (None, None))
 
     for el in elements:
-        if el.kind in GROUNDED_ELEMENT_KINDS:
-            if el.n1 == "0" or el.n2 == "0":
-                raise CircuitError(M.E_TOP_NODE_GROUND, name=el.name)
+        if el.kind in PORT_KINDS and el.four_node:
+            # Four named terminals (#314): the element grounds nothing,
+            # so any of them may be 0 -- `z,[1,0],[2,0]` is the two-node
+            # form written out -- but a port whose two terminals are the
+            # same node is shorted, the same fault as a self-looped
+            # resistor.
+            for top, bottom in el.port_nodes:
+                if top == bottom:
+                    raise CircuitError(M.E_PORT_SAME_NODE, name=el.name)
+                if top == "0" or bottom == "0":
+                    has_ground = True
+        else:
+            if el.kind in PORT_KINDS:
+                if el.n1 == "0" or el.n2 == "0":
+                    raise CircuitError(M.E_TOP_NODE_GROUND, name=el.name)
 
-        if el.n1 == el.n2 and el.kind != "m":
-            raise CircuitError(M.E_SAME_NODE, name=el.name)
+            if el.n1 == el.n2 and el.kind != "m":
+                raise CircuitError(M.E_SAME_NODE, name=el.name)
 
-        if el.kind in GROUNDED_ELEMENT_KINDS or el.n1 == "0" or el.n2 == "0":
-            has_ground = True
+            if el.kind in PORT_KINDS or el.n1 == "0" or el.n2 == "0":
+                has_ground = True
 
         if n1_target is not None:
-            if el.n1 == n1_target or el.n2 == n1_target:
+            touched = el.nodes
+            if n1_target in touched:
                 node1_seen = True
-            if el.n1 == n2_target or el.n2 == n2_target:
+            if n2_target in touched:
                 node2_seen = True
 
     if two_port_nodes is None:
@@ -455,9 +635,19 @@ def _check_connected(elements: List[Element]) -> None:
     for el in elements:
         if el.kind == "m":
             continue
-        nodes = [el.fields[i] for i in _IDENTIFIER_FIELD_IDX[el.kind]]
-        if el.kind in GROUNDED_ELEMENT_KINDS:
-            nodes.append("0")
+        if el.kind in PORT_KINDS:
+            # Each port joins its own two terminals, and the two ports
+            # do not join each other: an ideal transformer, or a
+            # parameter block, conducts nothing from one side to the
+            # other, so a secondary side with no path of its own to 0
+            # has no defined voltages and is reported floating (#314,
+            # Roberto's rule: the whole side of the circuit, not just
+            # the element). The two-node form grounds both ports, which
+            # is what it always did.
+            for top, bottom in el.port_nodes:
+                union(top, bottom)
+            continue
+        nodes = el.nodes
         for n in nodes[1:]:
             union(nodes[0], n)
 
@@ -484,7 +674,11 @@ def ambiguous_in_elements(elements: List[Element]) -> List[dict]:
 
     found: List[dict] = []
     for e in elements:
-        for idx in _VALUE_FIELD_IDX.get(e.kind, ()):
+        # A transformer's turns are two bare fields or one bracketed
+        # pair (#314); with the pair there is no fourth field to read.
+        value_idx = ((2,) if e.kind == "t" and len(e.fields) == 3
+                     else _VALUE_FIELD_IDX.get(e.kind, ()))
+        for idx in value_idx:
             if idx >= len(e.fields):
                 continue
             m = bare_suffix_match(e.fields[idx])

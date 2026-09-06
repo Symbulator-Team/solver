@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.27 -- unreleased
+
+### Added
+- **A transformer or two-port block may name all four terminals
+  (#314).** A node term may be a bracketed pair, `[top,bottom]`:
+  `t,[tl,bl],[tr,br],[N1,N2]` and `z,[tl,bl],[tr,br],[p11,p12,p21,p22]`
+  beside the calculator's `t,n1,n2,N1,N2` and `z,n1,n2[,[...]]`, which
+  keep their meaning -- the two-node form is the paired form with both
+  bottoms on 0, and the engine treats it exactly so. A transformer's
+  turns may also be written as a pair, `t,n1,n2,[N1,N2]`, and must be
+  when its nodes are pairs. Each port joins its own two terminals and
+  the two ports never conduct across each other, so a side of the
+  circuit with no path to node 0 is reported floating (217). A port
+  with the same node at both terminals is refused (218); a transformer
+  with the wrong shape (219) and a mixed pair-and-bare node term (220)
+  say so. `Element.port_nodes`, `four_node`, `turns`, `nodes` and
+  `param_idx` read these forms; `_IDENTIFIER_FIELD_IDX` still names the
+  node *fields*, which now may hold a pair.
+- **The current into every terminal.** A transformer or two-port
+  reports `i_<name><node>` for each distinct live terminal, the current
+  entering the element there: four in the paired form, two in the
+  grounded form. A transformer used to report its primary alone --
+  version 8 reported both, and the port had lost the secondary. A node
+  named at two terminals reports one sum.
+- **SPICE export of the paired forms**: the transformer's E/sense/F
+  triple and the two-port's VCCS quartet name each port's pair; an old
+  description's netlist is unchanged. Nine paired cases added to the
+  ahkab ground truth.
+
+### Changed
+- The schematic drawer refuses a four-node transformer or two-port by
+  code (701) rather than drawing its bottoms as ground; the circuit
+  still solves.
+
 ## 0.5.26 -- 1 Sep 2026
 
 ### Changed

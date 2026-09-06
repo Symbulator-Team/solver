@@ -1376,7 +1376,7 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     # Signs agree -> same polarity, dots level. Only a pair of plain
     # numbers can be compared; anything symbolic keeps them together.
     turns, same = [], True
-    for f in (e.fields[2], e.fields[3]):
+    for f in e.turns:                   # bare pair or [N1,N2] (#314)
         try:
             turns.append(float(f))
         except (TypeError, ValueError):
@@ -2339,7 +2339,18 @@ def to_svg(desc: str) -> str:
     >>> "svg" in to_svg("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
     True
     """
-    return _render(parse_circuit(desc, expand_si=False))
+    elements = parse_circuit(desc, expand_si=False)
+    # The layout is one row of nodes over one ground rail, and both
+    # two-port symbols hang from the row to the rail -- which is what
+    # the two-node form means. A block whose bottom terminals are live
+    # nodes (#314) does not fit that picture, and drawing it as though
+    # they were ground would be a wrong drawing rather than none.
+    # Refused cleanly until the drawer has a symbol for it; the circuit
+    # still solves.
+    for e in elements:
+        if (e.kind in PORT_BLOCK or e.kind == "t") and e.four_node:
+            raise CircuitError(M.E_DRAW_FOUR_NODE, name=e.name)
+    return _render(elements)
 
 
 def draw(desc: str):
