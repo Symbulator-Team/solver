@@ -478,13 +478,25 @@ class Circuit:
         power: v1*i1 + v2*i2 = 0). Only one current is a free unknown
         (i1); i2 is computed directly from it rather than needing its
         own equation."""
-        n1, n2, n1t, n2t = e.n1, e.n2, self._value(e.fields[2]), self._value(e.fields[3])
+        # Each port is a pair of terminals (X2): the calculator's form
+        # names the top of each and grounds the bottom, and
+        # `port_nodes` hands that back as ("n", "0"), so the two forms
+        # are one stamp. The winding voltage is the difference across
+        # the pair, and the port current enters the top terminal and
+        # leaves the bottom one.
+        (n1, n1b), (n2, n2b) = e.port_nodes
+        t1, t2 = e.turns
+        n1t, n2t = self._value(t1), self._value(t2)
         i1 = self.i_symbol(f"{e.name}{n1}")
         self.unknowns.append(i1)
         i2_expr = -i1 * n1t / n2t
-        self.equations.append(sp.Eq(self.v(n1) / n1t, self.v(n2) / n2t))
+        v1 = self.v(n1) - self.v(n1b)
+        v2 = self.v(n2) - self.v(n2b)
+        self.equations.append(sp.Eq(v1 / n1t, v2 / n2t))
         self.add_current(n1, i1)
+        self.add_current(n1b, -i1)
         self.add_current(n2, i2_expr)
+        self.add_current(n2b, -i2_expr)
 
     def _two_port_params(self, e: Element) -> Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
         """The four z/y/h/g/a/b parameters for two-port element `e`, as
@@ -515,10 +527,16 @@ class Circuit:
         in terms of the port voltages v1, v2, since v1/v2 are what the
         rest of the KCL system already has (as node voltages) while i1/i2
         are what KCL needs (currents to add into each port node's sum).
-        `n1`/`n2` are the two live nodes; the second terminal of each
-        port is implicitly ground, hence "grounded two-port"."""
-        n1, n2 = e.n1, e.n2
-        v1, v2 = self.v(n1), self.v(n2)
+        In the calculator's two-node form `n1`/`n2` are the two live
+        nodes and the second terminal of each port is implicitly ground,
+        hence "grounded two-port". Since X2 a block may name all four
+        terminals; `port_nodes` gives each port as a (top, bottom) pair
+        with "0" for the bottoms of the two-node form, so both forms
+        are the one stamp: a port voltage is the difference across its
+        pair, and its current enters the top and leaves the bottom."""
+        (n1, n1b), (n2, n2b) = e.port_nodes
+        v1 = self.v(n1) - self.v(n1b)
+        v2 = self.v(n2) - self.v(n2b)
         p11, p12, p21, p22 = self._two_port_params(e)
         k = e.kind
 
@@ -578,7 +596,9 @@ class Circuit:
         self.equations.append(sp.Eq(i1_sym, i1))
         self.equations.append(sp.Eq(i2_sym, i2))
         self.add_current(n1, i1_sym)
+        self.add_current(n1b, -i1_sym)
         self.add_current(n2, i2_sym)
+        self.add_current(n2b, -i2_sym)
 
     _stamp_z = _stamp_two_port
     _stamp_y = _stamp_two_port

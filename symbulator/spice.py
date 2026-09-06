@@ -408,7 +408,7 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
         elif el.kind == "o":
             node_set.update(el.fields[0:3])
         elif el.kind == "t" or el.kind in TWO_PORT_KINDS:
-            node_set.update(el.fields[0:2])
+            node_set.update(el.fields[i] for i in el.node_idx)
 
     numeric_vals = {el.name: _numeric(el.value) for el in elements
                     if el.kind in ("r", "l", "c", "e", "j", "m")}
@@ -619,18 +619,24 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
             # and a CCCS reflects it into the primary. Exact at DC, AC
             # and transient alike -- unlike the coupled-inductor
             # approximation, which shorts out at DC.
-            t1 = _numeric(el.fields[2])
-            t2 = _numeric(el.fields[3])
+            t1 = _numeric(el.turns[0])
+            t2 = _numeric(el.turns[1])
             if t1 and t2:
+                # Both forms through one expansion (X2): the calculator's
+                # grounds each port's bottom terminal, and `port_nodes`
+                # says so with a literal "0", so the four-node form
+                # differs only in the nodes a controlled source names --
+                # which SPICE's E and F take four of anyway.
+                (n1, n1b), (n2, n2b) = el.port_nodes
                 ratio = _spice_number(t2 / t1)
                 mid = inner_node(el.name, "s")
                 sense = unique("Vi_" + el.name)
                 lines.append(f"* {_typed(el)}  "
                              f"expands to:")
-                lines.append(f"{unique('E' + el.name)} {mid} 0 "
-                             f"{el.n1} 0 {ratio}")
-                lines.append(f"{sense} {mid} {el.n2} 0")
-                lines.append(f"{unique('F' + el.name)} {el.n1} 0 "
+                lines.append(f"{unique('E' + el.name)} {mid} {n2b} "
+                             f"{n1} {n1b} {ratio}")
+                lines.append(f"{sense} {mid} {n2} 0")
+                lines.append(f"{unique('F' + el.name)} {n1} {n1b} "
                              f"{sense} {ratio}")
                 warnings.append(
                     f"{el.name}: translated exactly as a controlled-"
@@ -660,19 +666,23 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
                 else:
                     lines.append(f"* {_typed(el)}  "
                                  f"expands to:")
-                    ports = [(el.n1, el.n1), (el.n1, el.n2),
-                             (el.n2, el.n1), (el.n2, el.n2)]
+                    # Each VCCS spans a port and is controlled by a
+                    # port; a port is its (top, bottom) pair, with "0"
+                    # for the bottoms of the two-node form (X2).
+                    p1, p2 = el.port_nodes
+                    ports = [(p1, p1), (p1, p2), (p2, p1), (p2, p2)]
                     count = 0
                     for (out, ctrl), coeff, suf in zip(ports, coeffs,
                                                        "abcd"):
                         if coeff == 0:
                             continue
                         lines.append(f"{unique('G' + el.name + suf)} "
-                                     f"{out} 0 {ctrl} 0 "
+                                     f"{out[0]} {out[1]} {ctrl[0]} {ctrl[1]} "
                                      f"{_spice_number(coeff)}")
                         count += 1
+                    how = "grounded" if not el.four_node else "four-node"
                     warnings.append(
-                        f"{el.name}: translated as {count} grounded "
+                        f"{el.name}: translated as {count} {how} "
                         f"conductance-form controlled sources")
 
     lines.append(".end")

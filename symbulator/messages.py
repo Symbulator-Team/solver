@@ -79,6 +79,7 @@ E_NEED_REFERENCE_NODE = 214
 E_INPUT_SAME_NODE     = 215
 E_NO_SUCH_NODE        = 216
 E_FLOATING_NODES      = 217
+E_PORT_SAME_NODE      = 218   # X2: a four-node port shorted on itself
 
 # --- 3xx: engine.py ---------------------------------------------------
 E_NO_STAMPING_RULE    = 301
@@ -112,6 +113,9 @@ E_NO_SHORT_CIRCUIT    = 502
 # --- 6xx: spice.py ----------------------------------------------------
 E_SPICE_EMPTY         = 601
 E_SPICE_NOTHING       = 602
+
+# --- 7xx: schematic.py ------------------------------------------------
+E_DRAW_FOUR_NODE      = 701   # X2: the drawer has no four-node symbol yet
 
 
 CATALOGUE = {
@@ -163,6 +167,10 @@ CATALOGUE = {
                         "ground."),
     E_SAME_NODE: ("error",
                   "Both nodes of '%{name}' can't be the same node."),
+    E_PORT_SAME_NODE: ("error",
+                       "A port of '%{name}' has the same node at both of "
+                       "its terminals. Each port of a transformer or "
+                       "two-port must join two different nodes."),
     E_NEED_REFERENCE_NODE: ("error",
                             "Circuit must contain a reference node 0."),
     E_INPUT_SAME_NODE: ("error",
@@ -266,6 +274,12 @@ CATALOGUE = {
     E_SPICE_NOTHING: ("error",
                       "No translatable elements found in the SPICE "
                       "netlist. %{warnings}"),
+
+    # --- 7xx schematic ------------------------------------------------
+    E_DRAW_FOUR_NODE: ("error",
+                       "'%{name}' names four nodes. The schematic drawer "
+                       "draws a transformer or two-port only in its "
+                       "two-node form for now; the circuit still solves."),
 }
 
 

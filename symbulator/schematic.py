@@ -2339,7 +2339,19 @@ def to_svg(desc: str) -> str:
     >>> "svg" in to_svg("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
     True
     """
-    return _render(parse_circuit(desc, expand_si=False))
+    elements = parse_circuit(desc, expand_si=False)
+    # The layout is one row of nodes over one ground rail, and both
+    # two-port symbols hang from the row to the rail -- which is what
+    # the two-node form means. A block whose bottom terminals are live
+    # nodes (X2) does not fit that picture, and drawing it as though
+    # they were ground would be a wrong drawing rather than none.
+    # Refused cleanly until the drawer has a symbol for it; the circuit
+    # still solves (Roberto, 6 Sep 2026: "We can do the drawing later").
+    for e in elements:
+        if e.kind in PORT_BLOCK or e.kind == "t":
+            if e.four_node:
+                raise CircuitError(M.E_DRAW_FOUR_NODE, name=e.name)
+    return _render(elements)
 
 
 def draw(desc: str):

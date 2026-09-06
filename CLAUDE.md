@@ -28,12 +28,22 @@ stays untouched). On the `symbulatorx` PythonAnywhere account it is
 tracking PyPI — Roberto took that decision on 6 Sep 2026 (X1 in
 `repos/local/NEXT_X.md` has the console commands).
 
-**This checkout's version carries a local label: `0.5.26+x1`.** It is
-version 9's release plus a PEP 440 local segment, so it satisfies the
-server's `symbulator>=0.5.26` pin, cannot be uploaded to PyPI, and
-`/healthz` shows which solver a site is running. Keep the label on a
-merge from 9 (it is X's line in `symbulator/__init__.py`) and bump it
-(`+x2`, …) when X's solver changes. The packaging test accepts the label.
+**This checkout's version carries a local label: `0.5.26+xN`** (`+x2`
+since X2, 6 Sep 2026). It is version 9's release plus a PEP 440 local
+segment, so it satisfies the server's `symbulator>=0.5.26` pin, cannot
+be uploaded to PyPI, and `/healthz` shows which solver a site is
+running. Keep the label on a merge from 9 (it is X's line in
+`symbulator/__init__.py`) and bump it with each X item that changes
+the solver. The packaging test accepts the label.
+
+**X2: the four-node forms.** `t,n1,n2,n1b,n2b,N1,N2` and
+`z,n1,n2,n1b,n2b[,[p11,p12,p21,p22]]` beside the two-node forms. Read
+`Element.port_nodes`, `four_node`, `turns`, `param_idx` and `node_idx`
+rather than indexing `fields` by position for these kinds; the kind
+table `_IDENTIFIER_FIELD_IDX` is right only for the two-node form.
+`tests/test_four_node_ports.py` and the nine four-node cases in
+`test_spice_groundtruth.py` (ahkab, installed `--no-deps` in
+`Application\vX\.venv`) are the proof.
 
 **Do not publish a second package to PyPI.** `symbulator` on PyPI is
 version 9's name and Roberto's to release, and he declined a
