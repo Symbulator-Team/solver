@@ -28,8 +28,9 @@ stays untouched). On the `symbulatorx` PythonAnywhere account it is
 tracking PyPI — Roberto took that decision on 6 Sep 2026 (X1 in
 `repos/local/NEXT_X.md` has the console commands).
 
-**This checkout's version carries a local label: `0.5.26+xN`** (`+x2`
-since X2, 6 Sep 2026). It is version 9's release plus a PEP 440 local
+**This checkout's version carries a local label: `0.5.28+xN`** (`+x4`
+since X4, 6 Sep 2026, the merge of version 9's #314; X2's four-node
+forms are superseded by 9's bracketed ones and gone from this tree). It is version 9's release plus a PEP 440 local
 segment, so it satisfies the server's `symbulator>=0.5.26` pin, cannot
 be uploaded to PyPI, and `/healthz` shows which solver a site is
 running. Keep the label on a merge from 9 (it is X's line in

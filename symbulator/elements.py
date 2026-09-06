@@ -411,7 +411,7 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
                                        value=typed.strip())
 
         expected = FIELD_COUNTS[kind]
-        if kind in OPTIONAL_IC_KINDS:
+        if kind in OPTIONAL_IC_KINDS or kind in TWO_PORT_KINDS:
             allowed = {expected, expected + 1}
         elif kind == "t":
             # name,n1,n2,N1,N2 -- or the turns as one bracketed pair,
@@ -419,12 +419,6 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
             allowed = {expected, expected - 1}
         else:
             allowed = {expected}
-        if kind in TWO_PORT_KINDS and len(parts) in allowed:
-            # A term where a node should be: `z,1,[..]` or
-            # `z,1,2,3,[..]` has the right count and the wrong shape.
-            has_term = parts[-1].strip().startswith("pr(")
-            if has_term and len(parts) in (3, 5):
-                allowed = set()
         if len(parts) not in allowed:
             if kind in OPTIONAL_IC_KINDS:
                 raise CircuitError(M.E_TERMS_WITH_IC, name=name,
@@ -441,6 +435,10 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
                                expected=expected, kind=kind)
 
         fields = list(parts[1:])
+        for idx in _IDENTIFIER_FIELD_IDX.get(kind, ()):
+            if idx < len(fields):
+                fields[idx] = fields[idx].lower()
+
         # Only when the rewrite actually changed something, and only when
         # it split the same way -- a mismatch means the two cannot be lined
         # up field by field, and a wrong original is worse than none.
@@ -499,13 +497,11 @@ def two_port_param_texts(el: Element) -> Optional[List[str]]:
     universal internal encoding of `[...]`), which is also accepted
     typed directly. Raises CircuitError when the term is not a
     four-entry list."""
-    if el.kind not in TWO_PORT_KINDS or len(el.fields) not in (3, 5):
+    if el.kind not in TWO_PORT_KINDS or len(el.fields) < 3:
         return None
-    # The term is the last field, after two nodes or after four (X2).
-    k = len(el.fields) - 1
-    text = el.fields[k].strip()
-    shown = (el.raw_fields[k].strip()
-             if len(el.raw_fields) > k else text)
+    text = el.fields[2].strip()
+    shown = (el.raw_fields[2].strip()
+             if len(el.raw_fields) > 2 else text)
     if not (text.startswith("pr(") and text.endswith(")")):
         raise CircuitError(M.E_TWOPORT_LAST_TERM, name=el.name, shown=shown)
     inner = text[3:-1]
