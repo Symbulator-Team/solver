@@ -408,7 +408,7 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
         elif el.kind == "o":
             node_set.update(el.fields[0:3])
         elif el.kind == "t" or el.kind in TWO_PORT_KINDS:
-            node_set.update(el.fields[i] for i in el.node_idx)
+            node_set.update(el.nodes)
 
     numeric_vals = {el.name: _numeric(el.value) for el in elements
                     if el.kind in ("r", "l", "c", "e", "j", "m")}
@@ -622,11 +622,11 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
             t1 = _numeric(el.turns[0])
             t2 = _numeric(el.turns[1])
             if t1 and t2:
-                # Both forms through one expansion (X2): the calculator's
-                # grounds each port's bottom terminal, and `port_nodes`
-                # says so with a literal "0", so the four-node form
-                # differs only in the nodes a controlled source names --
-                # which SPICE's E and F take four of anyway.
+                # Both forms through one expansion (#314): the
+                # calculator's grounds each port's bottom terminal, and
+                # `port_nodes` says so with a literal "0", so the paired
+                # form differs only in the nodes a controlled source
+                # names -- which SPICE's E and F take four of anyway.
                 (n1, n1b), (n2, n2b) = el.port_nodes
                 ratio = _spice_number(t2 / t1)
                 mid = inner_node(el.name, "s")
@@ -668,7 +668,7 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
                                  f"expands to:")
                     # Each VCCS spans a port and is controlled by a
                     # port; a port is its (top, bottom) pair, with "0"
-                    # for the bottoms of the two-node form (X2).
+                    # for the bottoms of the two-node form (#314).
                     p1, p2 = el.port_nodes
                     ports = [(p1, p1), (p1, p2), (p2, p1), (p2, p2)]
                     count = 0
@@ -680,7 +680,7 @@ def to_spice(desc: str) -> Tuple[str, List[str]]:
                                      f"{out[0]} {out[1]} {ctrl[0]} {ctrl[1]} "
                                      f"{_spice_number(coeff)}")
                         count += 1
-                    how = "grounded" if not el.four_node else "four-node"
+                    how = "four-node" if el.four_node else "grounded"
                     warnings.append(
                         f"{el.name}: translated as {count} {how} "
                         f"conductance-form controlled sources")

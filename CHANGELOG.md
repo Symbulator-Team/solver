@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.5.28 -- 6 Sep 2026
+
+### Changed
+- **A bottom terminal that is the other port's top draws round the far
+  side (#314).** `t,[1,0],[2,1],[80,120]`, the autotransformer written
+  as one tapped winding, put its second winding's return along the
+  block's own top in 0.5.27. The lead now drops below the feet, runs
+  under the block and rises on the side its node lies, with a hop where
+  it crosses the grounded foot's drop. `_Layout.return_col` decides the
+  side for every four-terminal lead by the node's column, which also
+  gives a common bottom its one shared line.
+
+## 0.5.27 -- 6 Sep 2026
+
+### Added
+- **A transformer or two-port block may name all four terminals
+  (#314).** A node term may be a bracketed pair, `[top,bottom]`:
+  `t,[tl,bl],[tr,br],[N1,N2]` and `z,[tl,bl],[tr,br],[p11,p12,p21,p22]`
+  beside the calculator's `t,n1,n2,N1,N2` and `z,n1,n2[,[...]]`, which
+  keep their meaning -- the two-node form is the paired form with both
+  bottoms on 0, and the engine treats it exactly so. A transformer's
+  turns may also be written as a pair, `t,n1,n2,[N1,N2]`, and must be
+  when its nodes are pairs. Each port joins its own two terminals and
+  the two ports never conduct across each other, so a side of the
+  circuit with no path to node 0 is reported floating (217). A port
+  with the same node at both terminals is refused (218); a transformer
+  with the wrong shape (219) and a mixed pair-and-bare node term (220)
+  say so. `Element.port_nodes`, `four_node`, `turns`, `nodes` and
+  `param_idx` read these forms; `_IDENTIFIER_FIELD_IDX` still names the
+  node *fields*, which now may hold a pair.
+- **The current into every terminal.** A transformer or two-port
+  reports `i_<name><node>` for each distinct live terminal, the current
+  entering the element there: four in the paired form, two in the
+  grounded form. A transformer used to report its primary alone --
+  version 8 reported both, and the port had lost the secondary. A node
+  named at two terminals reports one sum.
+- **SPICE export of the paired forms**: the transformer's E/sense/F
+  triple and the two-port's VCCS quartet name each port's pair; an old
+  description's netlist is unchanged. Nine paired cases added to the
+  ahkab ground truth.
+
+- **The schematic drawer draws the four-terminal forms.** The symbol
+  still spans between its two top nodes; each lower terminal leaves its
+  face sideways, rises through a clear column the layout keeps beside
+  the block, and joins its own node on the row, so the ground rail runs
+  beneath uncut. A bottom that is ground still drops to the rail; a
+  common bottom joins a transformer's two feet with one wire, and takes
+  a block's two leads to one line under the box; `z,[1,0],[2,0]` draws
+  exactly as `z,1,2`. The two-node drawing -- the rail cut at a block,
+  one ground symbol per run -- is untouched.
+
 ## 0.5.26 -- 1 Sep 2026
 
 ### Changed

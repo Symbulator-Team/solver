@@ -478,25 +478,66 @@ class Circuit:
         power: v1*i1 + v2*i2 = 0). Only one current is a free unknown
         (i1); i2 is computed directly from it rather than needing its
         own equation."""
-        # Each port is a pair of terminals (X2): the calculator's form
-        # names the top of each and grounds the bottom, and
-        # `port_nodes` hands that back as ("n", "0"), so the two forms
-        # are one stamp. The winding voltage is the difference across
-        # the pair, and the port current enters the top terminal and
-        # leaves the bottom one.
+        # Each port is a pair of terminals (#314): the calculator's form
+        # names the top of each and grounds the bottom, and `port_nodes`
+        # hands that back as ("n", "0"), so the two forms are one stamp.
+        # The winding voltage is the difference across the pair, and the
+        # port current enters the top terminal and leaves the bottom one.
         (n1, n1b), (n2, n2b) = e.port_nodes
         t1, t2 = e.turns
         n1t, n2t = self._value(t1), self._value(t2)
-        i1 = self.i_symbol(f"{e.name}{n1}")
+        # The primary current is the one free unknown. It is named for
+        # the terminal it enters, i_<name><n1>, unless that node is also
+        # another of the element's terminals -- then the answer at that
+        # node is a sum, and the free unknown steps aside to an internal
+        # name so the sum can carry the reader's one.
+        others = [n for n in (n1b, n2, n2b) if n != "0"]
+        free_name = f"{e.name}{n1}" if n1 not in others else f"{e.name}_p1"
+        i1 = self.i_symbol(free_name)
         self.unknowns.append(i1)
         i2_expr = -i1 * n1t / n2t
         v1 = self.v(n1) - self.v(n1b)
         v2 = self.v(n2) - self.v(n2b)
         self.equations.append(sp.Eq(v1 / n1t, v2 / n2t))
-        self.add_current(n1, i1)
-        self.add_current(n1b, -i1)
-        self.add_current(n2, i2_expr)
-        self.add_current(n2b, -i2_expr)
+        self._stamp_port_currents(e, [(n1, i1), (n1b, -i1),
+                                      (n2, i2_expr), (n2b, -i2_expr)],
+                                  free=(n1, i1))
+
+    def _stamp_port_currents(self, e: Element, into, free=None) -> None:
+        """Report, and stamp into KCL, the current entering a two-port
+        element at each of its terminal nodes (#314, Roberto: the
+        current going into the transformer at each node, and the same
+        for the two-ports; version 8 reported both of a transformer's
+        and the port lost the secondary).
+
+        `into` lists (node, expression) for the four terminals -- with
+        the two-node form's bottoms on "0", which reports nothing:
+        ground has no KCL and its current is nobody's answer. One node
+        named at several terminals gets one answer, the sum, so a
+        three-terminal block with a common bottom (`z,[1,3],[2,3]`)
+        reports the common terminal's total. Each answer is an unknown
+        i_<name><node> bound by its own equation, the way the two-port
+        stamp has always reported its port currents; `free` is a
+        terminal whose expression *is* already the unknown of that name
+        (the transformer's primary), which then needs no equation."""
+        total = {}
+        order = []
+        for node, expr in into:
+            if node == "0":
+                continue
+            if node not in total:
+                total[node] = sp.Integer(0)
+                order.append(node)
+            total[node] = total[node] + expr
+        for node in order:
+            expr = total[node]
+            sym = self.i_symbol(f"{e.name}{node}")
+            if free is not None and node == free[0] and expr == free[1]:
+                self.add_current(node, sym)
+                continue
+            self.unknowns.append(sym)
+            self.equations.append(sp.Eq(sym, expr))
+            self.add_current(node, sym)
 
     def _two_port_params(self, e: Element) -> Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
         """The four z/y/h/g/a/b parameters for two-port element `e`, as
@@ -529,11 +570,12 @@ class Circuit:
         are what KCL needs (currents to add into each port node's sum).
         In the calculator's two-node form `n1`/`n2` are the two live
         nodes and the second terminal of each port is implicitly ground,
-        hence "grounded two-port". Since X2 a block may name all four
-        terminals; `port_nodes` gives each port as a (top, bottom) pair
-        with "0" for the bottoms of the two-node form, so both forms
-        are the one stamp: a port voltage is the difference across its
-        pair, and its current enters the top and leaves the bottom."""
+        hence "grounded two-port". Since #314 a block may name all four
+        terminals as pairs; `port_nodes` gives each port as a (top,
+        bottom) pair with "0" for the bottoms of the two-node form, so
+        both forms are the one stamp: a port voltage is the difference
+        across its pair, and its current enters the top and leaves the
+        bottom."""
         (n1, n1b), (n2, n2b) = e.port_nodes
         v1 = self.v(n1) - self.v(n1b)
         v2 = self.v(n2) - self.v(n2b)
@@ -589,16 +631,11 @@ class Circuit:
         else:
             raise CircuitError(M.E_UNKNOWN_TWOPORT, kind=k)
 
-        i1_sym = self.i_symbol(f"{e.name}{n1}")
-        i2_sym = self.i_symbol(f"{e.name}{n2}")
-        self.unknowns.append(i1_sym)
-        self.unknowns.append(i2_sym)
-        self.equations.append(sp.Eq(i1_sym, i1))
-        self.equations.append(sp.Eq(i2_sym, i2))
-        self.add_current(n1, i1_sym)
-        self.add_current(n1b, -i1_sym)
-        self.add_current(n2, i2_sym)
-        self.add_current(n2b, -i2_sym)
+        # One answer per distinct terminal node, i_<name><node>, the
+        # current entering the block there (#314); the two-node form
+        # reports its two live nodes, as it always has.
+        self._stamp_port_currents(e, [(n1, i1), (n1b, -i1),
+                                      (n2, i2), (n2b, -i2)])
 
     _stamp_z = _stamp_two_port
     _stamp_y = _stamp_two_port

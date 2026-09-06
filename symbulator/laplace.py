@@ -197,10 +197,9 @@ def _is_controlled(expr: sp.Expr, elements) -> bool:
         for prefix in _ANSWER_PREFIXES:
             known.add(f"{prefix}_{el.name}")
             known.add(f"{prefix}{el.name}")
-        for idx in el.node_idx:
-            if idx < len(el.fields):
-                known.add(f"v_{el.fields[idx]}")
-                known.add(f"v{el.fields[idx]}")
+        for node in el.nodes:
+            known.add(f"v_{node}")
+            known.add(f"v{node}")
     return bool(names & known)
 
 

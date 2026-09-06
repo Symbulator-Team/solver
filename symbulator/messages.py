@@ -79,7 +79,9 @@ E_NEED_REFERENCE_NODE = 214
 E_INPUT_SAME_NODE     = 215
 E_NO_SUCH_NODE        = 216
 E_FLOATING_NODES      = 217
-E_PORT_SAME_NODE      = 218   # X2: a four-node port shorted on itself
+E_PORT_SAME_NODE      = 218   # #314: a port shorted on itself
+E_TERMS_TRANSFORMER   = 219   # #314: a transformer's three forms
+E_PORT_PAIR           = 220   # #314: node terms both bare or both pairs
 
 # --- 3xx: engine.py ---------------------------------------------------
 E_NO_STAMPING_RULE    = 301
@@ -171,6 +173,16 @@ CATALOGUE = {
                        "A port of '%{name}' has the same node at both of "
                        "its terminals. Each port of a transformer or "
                        "two-port must join two different nodes."),
+    E_TERMS_TRANSFORMER: ("error",
+                          "Your description of transformer '%{name}' has "
+                          "%{got} terms. Write it as name,n1,n2,N1,N2 or "
+                          "name,n1,n2,[N1,N2] with both lower terminals on "
+                          "ground, or name,[tl,bl],[tr,br],[N1,N2] with all "
+                          "four nodes."),
+    E_PORT_PAIR: ("error",
+                  "The node terms of '%{name}' must be two node names, or "
+                  "two bracketed pairs [top,bottom] with two entries "
+                  "each."),
     E_NEED_REFERENCE_NODE: ("error",
                             "Circuit must contain a reference node 0."),
     E_INPUT_SAME_NODE: ("error",
