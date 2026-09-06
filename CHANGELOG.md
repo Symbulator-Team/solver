@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased -- #315, the package in a notebook (6 Sep 2026)
+## 0.5.30 -- 6 Sep 2026 (#315, the package in a notebook)
 
 ### Added
 - **Results typeset in a notebook.** A `Result`, a `TheveninResult`
