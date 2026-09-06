@@ -116,7 +116,7 @@ class Circuit:
 
     def __init__(self, elements: List[Element], domain: str, omega=None,
                  params: Optional[Dict[str, Dict[str, object]]] = None,
-                 suffix: str = "si"):
+                 suffix: str = "si", references=()):
         """Set up empty bookkeeping for a solve: `domain` picks dc/ac/fd
         stamping rules (see the _stamp_* methods), `omega` is the AC
         angular frequency symbol/value, `params` supplies numeric two-port
@@ -158,6 +158,13 @@ class Circuit:
         # transformer's primary current when its top node is also
         # another of its terminals (#314) -- dropped from the answers.
         self.internal: set = set()
+        # Every node held at 0: ground, and one reference per island
+        # behind a port (#322). `references` are a caller's preferred
+        # choices (`port()` names its ports' bottoms); the rest are
+        # chosen by `local_references`, and the answers say which.
+        from .elements import local_references
+        self.local_references = local_references(elements, preferred=references)
+        self.references = {"0"} | set(self.local_references)
         self.known: Dict[str, sp.Expr] = {}
         self._by_name: Dict[str, Element] = {e.name: e for e in elements}
         # Built before the first _value call (the mutuals loop below
@@ -198,7 +205,7 @@ class Circuit:
         only ever appears on the *voltage* side of an equation (e.g. an
         op-amp's untouched output before add_current is called) still
         ends up with a KCL equation once stamping is done."""
-        if node == "0":
+        if node in self.references:
             return sp.Integer(0)
         sym = _sym(f"v_{node}")
         if f"v_{node}" not in [str(u) for u in self.unknowns]:
@@ -215,7 +222,7 @@ class Circuit:
         out" and setting that total to 0 is exactly KCL for that node.
         Ground is exempt: current can freely flow to/from the reference
         node without needing its own balance equation."""
-        if node == "0":
+        if node in self.references:
             return
         self.v(node)  # ensure node is registered
         self.node_sum[node] = self.node_sum[node] + expr
@@ -850,13 +857,14 @@ def _diagnose_unsolvable(circuit: "Circuit") -> Optional[str]:
 def solve_circuit(elements: List[Element], domain: str, omega=None,
                   params: Optional[Dict[str, Dict[str, object]]] = None,
                   equations=None, unknowns=None, conditions=None,
-                  suffix: str = "ask") -> Dict[str, sp.Expr]:
+                  suffix: str = "ask", references=()) -> Dict[str, sp.Expr]:
     """The preferred solution of `solve_circuit_all` (see there). Kept as
     the name every caller already uses; only circuits whose expert-mode
     equations are quadratic in an unknown ever have more than one."""
     return solve_circuit_all(elements, domain, omega=omega, params=params,
                              equations=equations, unknowns=unknowns,
-                             conditions=conditions, suffix=suffix)[0]
+                             conditions=conditions, suffix=suffix,
+                             references=references)[0]
 
 
 def _rank_solutions(solutions: List[Dict[sp.Symbol, sp.Expr]]) -> List[Dict[sp.Symbol, sp.Expr]]:
@@ -883,7 +891,7 @@ def _rank_solutions(solutions: List[Dict[sp.Symbol, sp.Expr]]) -> List[Dict[sp.S
 def solve_circuit_all(elements: List[Element], domain: str, omega=None,
                       params: Optional[Dict[str, Dict[str, object]]] = None,
                       equations=None, unknowns=None, conditions=None,
-                      suffix: str = "ask") -> List[Dict[str, sp.Expr]]:
+                      suffix: str = "ask", references=()) -> List[Dict[str, sp.Expr]]:
     """Build and solve the KCL system for `elements`. Returns a list of
     dicts {symbol name: solved sympy expression}, one per solution, for
     every node voltage and element/branch current, mirroring what
@@ -928,6 +936,7 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
     reserve_imaginary = (domain == "ac")
 
     circuit = Circuit(elements, domain, omega=omega, params=params,
+                      references=references,
                       suffix=suffix)
     circuit.stamp_all()
 

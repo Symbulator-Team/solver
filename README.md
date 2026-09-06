@@ -209,7 +209,41 @@ params = port("r1,1,3,100:r2,2,3,200:r3,3,0,50", n1="1", n2="2", kind="z", domai
 params["11"], params["12"], params["21"], params["22"]
 ```
 
-Works the same way in AC (pass `omega=...` and `domain="ac"`).
+Works the same way in AC (pass `omega=...` and `domain="ac"`) and in the
+s-domain (`domain="fd"`).
+
+**A port that floats** is written as a `[top,bottom]` pair instead of a
+node, the same spelling a four-terminal two-port *element* uses. A ladder
+with resistors in both rails, Alexander & Sadiku's Problem 19.2, has no
+grounded port and no node 0 at all:
+
+```python
+z = port("r1,a,b,1:r2,b,c,1:r3,c,d,1:r4,d,e,1:r5,f,g,1:r6,g,h,1:r7,h,i,1:"
+         "r8,i,j,1:r9,b,g,1:r10,c,h,1:r11,d,i,1", "[a,f]", "[e,j]", "z")
+z["11"], z["12"]          # 41/15, 1/15
+```
+
+Grounding both bottoms instead would short out the lower rail and give a
+different circuit's answer (11/5 and 3/5). The tool takes each port's lower
+terminal as the reference for its own measurement, which is what the
+definition of the parameters does.
+
+**A side of the circuit with no path to node 0** -- the far side of a
+transformer or a parameter block that nothing grounds -- is not an error:
+it is given a reference of its own, the first port bottom in it, whose
+voltage is reported as 0, and the result says so:
+
+```python
+res = dc("za,[p,0],[q,m],[25,20,5,10]:zb,[p,0],[m,n],[50,25,25,30]:e1,p,0,1")
+res.references        # {'m': ['q', 'n']}
+res.notes[0]["text"]  # "Node(s) m, q, n have no path to node 0 (they lie behind
+                      #  a port), so their voltages are measured against m, taken as 0."
+```
+
+Every current and every voltage *difference* is the same whichever node
+of the island is held at 0; only the island's absolute potentials depend on
+it. A dangling piece of ordinary elements (`r1,2,3,1` on its own) is still
+refused as floating.
 
 ## s-domain and transient: `fd()` and `tr()`
 

@@ -44,7 +44,7 @@ parallel shorthand, and nothing else (#165).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Sequence, List, Optional
 
 from .si_prefix import expand_shorthand
 
@@ -333,7 +333,8 @@ def _split_fields(raw: str) -> List[str]:
     return fields
 
 
-def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
+def parse_circuit(desc: str, expand_si: bool = True,
+                  references: Sequence[str] = ()) -> List[Element]:
     """Parse a Symbulator-style circuit description string into a list
     of Element objects. Raises CircuitError on malformed input (mirrors
     symbv8s1 + symbv8s2).
@@ -453,7 +454,7 @@ def parse_circuit(desc: str, expand_si: bool = True) -> List[Element]:
             two_port_param_texts(element)   # validates; raises if malformed
         elements.append(element)
 
-    _validate_topology(elements)
+    _validate_topology(elements, references=references)
     return elements
 
 
@@ -549,7 +550,8 @@ def two_port_param_conditions(elements: List[Element]) -> List[str]:
     return conds
 
 
-def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] = None) -> None:
+def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] = None,
+                       references: Sequence[str] = ()) -> None:
     """Whole-circuit sanity checks that can't be done element-by-element
     (ports `symbv8s3`): the circuit must be grounded (some node is 0, or
     a grounded-kind element like a two-port block is present), and no
@@ -565,6 +567,10 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
     has_ground = False
     node1_seen = node2_seen = False
     n1_target, n2_target = (two_port_nodes or (None, None))
+    # A caller's own references (#322: `port()` names the bottoms of
+    # its ports) count as ground for the "is anything grounded" test:
+    # a ladder with no node 0 at all is a legitimate two-port.
+    refs = set(references or ())
 
     for el in elements:
         if el.kind in PORT_KINDS and el.four_node:
@@ -589,6 +595,9 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
             if el.kind in PORT_KINDS or el.n1 == "0" or el.n2 == "0":
                 has_ground = True
 
+        if refs and any(n in refs for n in el.nodes):
+            has_ground = True
+
         if n1_target is not None:
             touched = el.nodes
             if n1_target in touched:
@@ -599,7 +608,7 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
     if two_port_nodes is None:
         if not has_ground:
             raise CircuitError(M.E_NEED_REFERENCE_NODE)
-        _check_connected(elements)
+        _check_connected(elements, references)
     else:
         if n1_target == n2_target:
             raise CircuitError(M.E_INPUT_SAME_NODE)
@@ -609,18 +618,20 @@ def _validate_topology(elements: List[Element], two_port_nodes: Optional[tuple] 
             raise CircuitError(M.E_NO_SUCH_NODE, node=n2_target)
 
 
-def _check_connected(elements: List[Element]) -> None:
-    """Every node must have a conduction path to the reference. A part of
-    the circuit with no such path (say `r1,2,3,1` hanging on its own) has
-    no defined voltages, and the solver would otherwise return it quietly
-    parametrized in one of its own node voltages (`v_2 = v_3`) rather
-    than flag the mistake (ports `symbv8s3`'s "floating node" check).
+def _islands(elements: List[Element], references: Sequence[str] = ()):
+    """The connected pieces of the circuit that hold no reference: a
+    list of (nodes in element order, port terminals among them) for
+    each. `references` are nodes a caller holds at 0 besides "0".
 
     Connectivity is by terminals: r/l/c/e/j/s/t join their two nodes, an
     op-amp joins all three of its terminals (its nullor constraints tie
-    them together), and a grounded two-port block ties both nodes to 0.
-    Mutual inductances name inductors, not nodes, so they add nothing."""
+    them together), and each port of a transformer or parameter block
+    joins its own two terminals -- the two ports never join each other,
+    since the element conducts nothing from one side to the other."""
     parent = {"0": "0"}
+    order: List[str] = []           # every node, first-mention order
+    port_terms: List[str] = []      # port terminals, first-mention order
+    bottoms: List[str] = []         # port bottoms, first-mention order
 
     def find(x):
         parent.setdefault(x, x)
@@ -632,29 +643,94 @@ def _check_connected(elements: List[Element]) -> None:
     def union(a, b):
         parent[find(a)] = find(b)
 
+    def note(n):
+        if n not in parent:
+            parent[n] = n
+        if n not in order:
+            order.append(n)
+
     for el in elements:
         if el.kind == "m":
             continue
         if el.kind in PORT_KINDS:
-            # Each port joins its own two terminals, and the two ports
-            # do not join each other: an ideal transformer, or a
-            # parameter block, conducts nothing from one side to the
-            # other, so a secondary side with no path of its own to 0
-            # has no defined voltages and is reported floating (#314,
-            # Roberto's rule: the whole side of the circuit, not just
-            # the element). The two-node form grounds both ports, which
-            # is what it always did.
             for top, bottom in el.port_nodes:
+                note(top); note(bottom)
                 union(top, bottom)
+                for n in (top, bottom):
+                    if n not in port_terms:
+                        port_terms.append(n)
+                if bottom not in bottoms:
+                    bottoms.append(bottom)
             continue
         nodes = el.nodes
+        for n in nodes:
+            note(n)
         for n in nodes[1:]:
             union(nodes[0], n)
 
-    root = find("0")
-    floating = sorted(n for n in parent if find(n) != root)
+    # Only node 0 roots a piece. A caller's `references` are hints for
+    # *which* node of an island to hold at 0, never a reason to treat
+    # the island as grounded -- `port()` names both of its ports'
+    # bottoms, and on a ladder with no node 0 those lie in one island
+    # that must get exactly one reference, not two.
+    roots = {find("0")}
+    islands = {}
+    for n in order:
+        r = find(n)
+        if r in roots:
+            continue
+        islands.setdefault(r, []).append(n)
+    out = []
+    for nodes in islands.values():
+        out.append((nodes, [n for n in port_terms if n in nodes],
+                    [n for n in bottoms if n in nodes]))
+    return out
+
+
+def local_references(elements: List[Element],
+                     preferred: Sequence[str] = ()) -> Dict[str, List[str]]:
+    """{reference node: the other nodes of its island} for every island
+    behind a port (#322).
+
+    An island -- a connected piece with no path to node 0 -- is what the
+    far side of a transformer or a parameter block is when nothing else
+    grounds it: a legitimate circuit whose absolute potentials are
+    undefined, though every current and every difference is not. Nodal
+    analysis needs one reference per piece, so each island gets one:
+    the first of `preferred` that lies in it (`port()` names the
+    bottoms of its ports), else the first port bottom mentioned in it,
+    else its first node. Its voltage is held at 0 and the answers say
+    so. An island with no port terminal at all is a mistake (`r1,2,3,1`
+    hanging on its own) and is not given a reference here."""
+    out: Dict[str, List[str]] = {}
+    for nodes, terms, bottoms in _islands(elements, preferred):
+        if not terms and not any(p in nodes for p in preferred):
+            continue
+        ref = next((p for p in preferred if p in nodes), None)
+        if ref is None:
+            ref = bottoms[0] if bottoms else nodes[0]
+        out[ref] = [n for n in nodes if n != ref]
+    return out
+
+
+def _check_connected(elements: List[Element],
+                     references: Sequence[str] = ()) -> None:
+    """Every node must have a conduction path to a reference. A part of
+    the circuit with no such path (say `r1,2,3,1` hanging on its own) has
+    no defined voltages, and the solver would otherwise return it quietly
+    parametrized in one of its own node voltages (`v_2 = v_3`) rather
+    than flag the mistake (ports `symbv8s3`'s "floating node" check).
+
+    Since #322 an island that holds a port terminal is not a mistake --
+    it is the far side of a transformer or a parameter block, and
+    `local_references` gives it a reference of its own -- so only an
+    island of ordinary elements is reported here."""
+    floating = []
+    for nodes, terms, _ in _islands(elements, references):
+        if not terms and not any(p in nodes for p in references):
+            floating.extend(nodes)
     if floating:
-        raise CircuitError(M.E_FLOATING_NODES, nodes=", ".join(floating))
+        raise CircuitError(M.E_FLOATING_NODES, nodes=", ".join(sorted(floating)))
 
 
 # Which field indices (0-based, after the element name) hold *values*

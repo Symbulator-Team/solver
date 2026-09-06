@@ -125,6 +125,10 @@ def _engineering(text: str) -> Optional[str]:
 COL_W = 132        # horizontal distance between adjacent node columns
 ROW_H = 150        # top row of nodes down to the ground rail
 STACK_H = 88       # extra height per stacked parallel branch
+BLOCK_LANE_H = ROW_H + 100  # a second block, below the first (#321):
+                            # one band, plus room for the upper block's
+                            # lead bus, its 12px overhang and a ground
+                            # symbol under it
 # 78 until #213, which is when the arithmetic was first done rather
 # than eyeballed. A lifted source hangs its value *below* its
 # circle, and the element on the row beneath carries a value and a
@@ -1220,7 +1224,8 @@ PORT_BOX_MARK = 30.0  # and how far past the box each ground symbol sits:
 
 
 def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
-                   y_top: float, y_bot: float, four: bool = False):
+                   y_top: float, y_bot: float, four: bool = False,
+                   legs_to_rail: bool = True):
     """A two-port block: one box filling the band between the node row
     and the ground rail, with a terminal at each of its four corners.
 
@@ -1272,7 +1277,7 @@ def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
     # tight drawing and adrift on a wide one; the midpoint is the same
     # gap on both sides however far apart the columns fall.
     legs = []
-    if not four:
+    if not four and legs_to_rail:
         for x, node_x in ((bx0, min(xa, bx0)), (bx1, max(xb, bx1))):
             out = (x + node_x) / 2.0
             cv.wire(min(x, out), low, max(x, out), low)
@@ -1290,8 +1295,10 @@ def _draw_port_box(cv: _Canvas, e: Element, xa: float, xb: float,
     cv.runs(mid, top, _name_runs(e.name))
     for i, text in enumerate(params):
         cv.text(mid, top + (i + 1) * PORT_BOX_LINE, text)
-    if four:
-        # the lower terminals, on the faces, for the caller to route
+    if four or not legs_to_rail:
+        # the lower terminals, on the faces, for the caller to route --
+        # or, for a two-node block with another hanging below it
+        # (#321), for a ground symbol each instead of legs to the rail
         return [(bx0, low), (bx1, low)]
     return legs
 
@@ -1705,6 +1712,12 @@ def _port_tops(e: Element) -> Tuple[str, str]:
     return tl, tr
 
 
+def _laned(e: Element) -> bool:
+    """A parameter block, in either form: the kind that goes into a
+    lane when it overlaps another (#321). Transformers keep the row."""
+    return e.kind in PORT_BLOCK
+
+
 def _drawn_four(e: Element) -> bool:
     """Does this transformer or two-port want the four-terminal
     drawing? Only when at least one of its bottoms is a live node:
@@ -1795,6 +1808,8 @@ class _Layout:
         self.elem_col: Dict[str, int] = {}      # grounded elements
         self.level: Dict[str, int] = {}         # spanning elements
         self.op_lane: Dict[str, int] = {}       # op-amps
+        self.block_lane: Dict[str, int] = {}    # four-terminal blocks (#321)
+        self.max_block_lane = 0
         self._assign()
 
     def _assign(self) -> None:
@@ -1985,7 +2000,16 @@ class _Layout:
                 else (e.n1, e.n2)
         spans = [(min(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]),
                   max(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]), e)
-                 for e in self.spanning]
+                 for e in self.spanning if not _laned(e)]
+        # A four-terminal block never sits on a stacked level: two whose
+        # spans overlap go into lanes down the band instead (#321), so
+        # they are kept out of the colouring above and placed on the
+        # row's occupancy list at level 0 by hand.
+        laned = [(min(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]),
+                  max(self.node_col[ends(e)[0]], self.node_col[ends(e)[1]]), e)
+                 for e in self.spanning if _laned(e)]
+        for lo, hi, e in laned:
+            self.level[e.name] = 0
         # Narrow before wide: an interval nested inside another must end
         # up *below* it, so the outer element's risers drop past the
         # inner one's endpoints (a shared node -- a junction) instead of
@@ -2025,6 +2049,7 @@ class _Layout:
         spans = ordered
 
         placed: List[Tuple[int, int, int]] = list(stubs)
+        placed += [(lo, hi, 0) for lo, hi, _ in laned]
         # A column that carries something down into the band below the
         # node row -- a grounded element, an op-amp's input or output
         # riser -- blocks the row above it too: an element spanning
@@ -2074,6 +2099,44 @@ class _Layout:
             taken.append((lo, hi, lane))
         self.max_op_lane = max(self.op_lane.values(), default=0)
 
+        # Two four-terminal blocks sharing a port, or overlapping at
+        # all, are drawn one below the other (#321): the same greedy
+        # colouring as the op-amp lanes. A parallel-series connection
+        # of two z blocks -- AS7's Problem 19.70, the case that found
+        # this -- had both boxes centred on the same columns, one drawn
+        # through the other's parameters.
+        # A block whose lower terminal is another block's upper terminal
+        # is wired above it -- the series connection -- and is drawn
+        # above it: its lane is below (numerically above) the other's.
+        # Kahn's walk over those edges, the (lo, hi) sort as tie-break.
+        laned.sort(key=lambda t: (t[0], t[1]))
+        tops = {e.name: {t for t, _ in e.port_nodes} for _, _, e in laned}
+        bottoms = {e.name: {b for _, b in e.port_nodes if b != "0"}
+                   for _, _, e in laned}
+        above_b: Dict[str, set] = {}      # name -> names that sit above it
+        for _, _, e in laned:
+            for _, _, f in laned:
+                if e.name != f.name and bottoms[e.name] & tops[f.name]:
+                    above_b.setdefault(f.name, set()).add(e.name)
+        pending_b = list(laned)
+        done_b: set = set()
+        taken_b: List[Tuple[int, int, int]] = []
+        while pending_b:
+            pick = next((t for t in pending_b
+                         if above_b.get(t[2].name, set()) <= done_b),
+                        pending_b[0])
+            pending_b.remove(pick)
+            lo, hi, e = pick
+            lane = max((self.block_lane[a] + 1 for a in above_b.get(e.name, ())
+                        if a in self.block_lane), default=0)
+            while any(l == lane and min(hi, h) > max(lo, o)
+                      for o, h, l in taken_b):
+                lane += 1
+            self.block_lane[e.name] = lane
+            done_b.add(e.name)
+            taken_b.append((lo, hi, lane))
+        self.max_block_lane = max(self.block_lane.values(), default=0)
+
     def return_col(self, e: Element, node: str) -> Optional[int]:
         """The spacer column through which a four-terminal block's lead
         to bottom node `node` rises: the one on the side of the block
@@ -2120,7 +2183,8 @@ class _Layout:
 
     @property
     def y_bot(self) -> float:
-        return self.y_top + ROW_H + self.max_op_lane * OP_LANE_H
+        return (self.y_top + ROW_H + self.max_op_lane * OP_LANE_H
+                + self.max_block_lane * BLOCK_LANE_H)
 
 
 # --- rendering ------------------------------------------------------
@@ -2324,12 +2388,23 @@ def _render(elements: List[Element]) -> str:
                 # as it always did. The two-node ground logic below is
                 # untouched -- this branch never cuts the rail and
                 # never asks for a symbol on it.
+                # The block's own band: lane 0 is the node row's, a
+                # later lane one BLOCK_LANE_H lower (#321). Its upper
+                # terminals then rise to the node row at their own
+                # columns, which is where the book joins the blocks.
+                lane = lay.block_lane.get(e.name, 0)
+                y_lane = y_top + lane * BLOCK_LANE_H
+                y_band = y_lane + ROW_H
                 if e.kind == "t":
-                    lows = _draw_transformer(cv, e, xa, xb, y_top, y_bot,
+                    lows = _draw_transformer(cv, e, xa, xb, y_lane, y_band,
                                              four=True)
                 else:
-                    lows = _draw_port_box(cv, e, xa, xb, y_top, y_bot,
+                    lows = _draw_port_box(cv, e, xa, xb, y_lane, y_band,
                                           four=True)
+                if lane:
+                    for xn in (xa, xb):
+                        cv.wire(xn, y_top, xn, y_lane)
+                below = lane < lay.max_block_lane
                 (tl, bl), (tr, br) = e.port_nodes
                 left_first = lay.node_col[tl] <= lay.node_col[tr]
                 lb, rb = (bl, br) if left_first else (br, bl)
@@ -2360,6 +2435,13 @@ def _render(elements: List[Element]) -> str:
                 risen = set()
                 for node, x, side in ((lb, xl, "L"), (rb, xr, "R")):
                     if node == "0":
+                        if below:
+                            # another block hangs under this one, so a
+                            # drop to the rail would cut through it:
+                            # a stub and the symbol, right here
+                            cv.wire(x, low, x, low + 16.0)
+                            _ground_symbol(cv, x, low + 16.0)
+                            continue
                         cv.wire(x, low, x, y_bot)
                         ground_x.append(x)
                         ground_marks.append(x)
@@ -2395,7 +2477,29 @@ def _render(elements: List[Element]) -> str:
                 # between their two feet says it once for the pair.
                 ground_marks.append(sum(legs) / len(legs))
             else:
-                legs = _draw_port_box(cv, e, xa, xb, y_top, y_bot)
+                # A two-node block in a lane (#321): drawn one
+                # BLOCK_LANE_H lower per lane, its upper terminals rising
+                # to the node row; when another block hangs below it,
+                # its legs stop at its own band's foot with a ground
+                # symbol there, since a drop to the rail would cut the
+                # lower block. Lane 0 with nothing below is the drawing
+                # as it always was.
+                lane = lay.block_lane.get(e.name, 0)
+                y_lane = y_top + lane * BLOCK_LANE_H
+                below = lane < lay.max_block_lane
+                if lane:
+                    for xn in (xa, xb):
+                        cv.wire(xn, y_top, xn, y_lane)
+                if below:
+                    faces = _draw_port_box(cv, e, xa, xb, y_lane, y_lane + ROW_H,
+                                           legs_to_rail=False)
+                    for x, low in faces:
+                        # past the box's own 12px overhang, then the symbol
+                        cv.wire(x, low, x, low + PORT_BOX_OVER + 16.0)
+                        _ground_symbol(cv, x, low + PORT_BOX_OVER + 16.0)
+                    segs[e.name] = (xa, y_top, xb, y_top)
+                    continue
+                legs = _draw_port_box(cv, e, xa, xb, y_lane, y_bot)
                 # Both lower terminals are ground, and each says so
                 # where it is rather than making the reader trace the
                 # rail to a symbol at the far end of the drawing
@@ -2427,11 +2531,19 @@ def _render(elements: List[Element]) -> str:
         x, xn = lay.px(col_e), lay.px(col_n)
         if col_e != col_n:
             cv.wire(xn, y_top, x, y_top)   # stub to a parallel column
-        # keep n1 at the end the element was declared from
+        # keep n1 at the end the element was declared from. When block
+        # lanes have made the band taller (#321), the body stays in the
+        # first band, level with the top block, and plain wire runs on
+        # to the rail -- centred on the whole band it landed on the
+        # top block's ground symbols.
+        y_foot = y_bot
+        if lay.max_block_lane:
+            y_foot = y_top + ROW_H
+            cv.wire(x, y_foot, x, y_bot)
         if e.n1 == "0":
-            segs[e.name] = (x, y_bot, x, y_top)
+            segs[e.name] = (x, y_foot, x, y_top)
         else:
-            segs[e.name] = (x, y_top, x, y_bot)
+            segs[e.name] = (x, y_top, x, y_foot)
         _draw_element(cv, e, *segs[e.name],
                       dependent=e.name in lay.controlled,
                       mark_v=e.name in lay.v_ref,
@@ -2628,6 +2740,10 @@ def draw(desc: str):
 #   was that they cluttered the drawing more than they informed it. The
 #   box does not show the ground return and does not show that the two
 #   port currents differ; the parameters and the answers do.
+#   (The four-terminal box of #314 does draw the parameters, and since
+#   #321 two such boxes that overlap stack in lanes down the band, the
+#   lower one's upper terminals rising to the node row -- the shape a
+#   book gives an interconnection of two-ports.)
 # * The transformer `t` does have a symbol: two windings facing a core,
 #   with the polarity dots and the turns ratio. Its lower terminals go
 #   to the rail, which is not a stylistic choice -- `engine._stamp_t`
