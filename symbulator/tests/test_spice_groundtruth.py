@@ -13,6 +13,15 @@ numpy-2-incompatible op report printers. If it cannot be imported and
 patched, the whole module skips: the assertions are extras on top of
 test_spice.py, not a dependency of the package.
 
+ahkab is a second opinion and nothing more. It is GPLv2 where symbulator
+is MIT, so the distance is a licence fact rather than a preference: it
+is not a dependency at any level, it is not shipped in any build, it is
+imported nowhere but this file, and no ahkab code or design has been
+adopted. What runs here is its *numerical* operating point, `new_op`;
+ahkab's own symbolic module is deliberately untouched, since checking
+one SymPy result against another would share a dependency and prove
+less. Roberto acknowledges the project by name in the credits.
+
 One documented quirk, verified directly: ahkab's H (CCVS) senses with
 the OPPOSITE sign to its own F (CCCS) and to the ngspice manual, which
 defines the two identically ("positive controlling current flows from
