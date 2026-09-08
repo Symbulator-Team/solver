@@ -177,25 +177,63 @@ def test_a_source_whose_current_is_named_keeps_both_kcls():
 
 # --- what is refused, and how -------------------------------------------
 
-@pytest.mark.parametrize("desc, method", [
-    ("e1,1,0,10\nt1,1,2,[1,2]\nr1,2,0,50", "nodal"),
-    ("e1,1,0,10\nt1,1,2,[1,2]\nr1,2,0,50", "mesh"),
-    ("e1,1,0,10\nr1,1,2,5\nz1,2,3,[1,2,3,4]\nr2,3,0,5", "nodal"),
-    ("e1,1,0,1\nl1,1,2,1\nl2,3,0,1\nm1,l1,l2,0.5\nr1,2,0,1\nr2,3,0,1",
-     "mesh"),
+TRANSFORMER = "e1,1,0,10\nr1,1,2,5\nt1,2,3,[1,2]\nr2,3,0,50"
+TWO_PORT = "e1,1,0,10\nr1,1,2,5\nz1,2,3,[1,2,3,4]\nr2,3,0,5"
+COUPLED = ("e1,1,0,10\nl1,1,2,2\nr1,2,0,5\nl2,3,0,3\nr2,3,4,7\n"
+           "e2,4,0,0\nm1,l1,l2,1")
+
+
+@pytest.mark.parametrize("desc, method, code", [
+    # #332: each of these is refused by exactly one method, and the
+    # refusal names the other -- because the other one now handles it.
+    (TRANSFORMER, "mesh", M.E_BH_PORT_USE_NODAL),
+    (TWO_PORT, "mesh", M.E_BH_PORT_USE_NODAL),
+    (COUPLED, "nodal", M.E_BH_MUTUAL_USE_MESH),
+    ("e1,1,0,1\nr1,1,2,1000\nr2,2,3,10000\no1,0,2,3", "mesh",
+     M.E_BH_MESH_OPAMP),
 ])
-def test_refusals_are_sentences_not_exceptions(desc, method):
+def test_refusals_are_sentences_not_exceptions(desc, method, code):
     system = getattr(byhand, method)(parse_circuit(desc), "dc")
     assert not system.supported
     # A code, not a sentence: the package returns structured messages
     # and the app puts them into words (#199). The English travels
     # beside the code for a traceback and for a page that has never seen
     # it, and is still a whole sentence.
-    assert system.reason["code"] == M.E_BH_NOT_TAUGHT_FOR
+    assert system.reason["code"] == code
     assert system.reason["text"].endswith(".")
     assert not system.rows
     # A refusal reaches `compare` as a verdict, never as a raise.
     assert byhand.compare(system, {}).verdict == "unsupported"
+
+
+@pytest.mark.parametrize("desc, method", [
+    (TRANSFORMER, "nodal"), (TWO_PORT, "nodal"), (COUPLED, "mesh"),
+])
+def test_the_augmented_method_covers_the_special_elements(desc, method):
+    """#332: a transformer, a two-port block or a coupled pair is no
+    longer a refusal. Whichever method suits it carries the element's
+    own relation as an extra equation and its own current as an extra
+    unknown -- the augmented method a textbook writes."""
+    coupled = "m1," in desc
+    kw = {"omega": 2} if coupled else {}
+    system, verdict = _run(desc, method, domain="ac" if coupled else "dc",
+                           **kw)
+    assert system.supported, system.reason
+    assert verdict.verdict == "agrees", verdict.message
+    assert len(system.rows) == len(system.unknowns), "the system is square"
+
+
+def test_a_coupled_coil_puts_its_induced_voltage_in_the_loop():
+    """The whole reason coupled coils are taught with mesh: the mutual
+    term is a voltage in the neighbouring loop's equation, which is
+    what a mesh system is made of."""
+    system, verdict = _run(COUPLED, "mesh", domain="ac", omega=2)
+    assert verdict.verdict == "agrees", verdict.message
+    first = system.rows[0]
+    # jwM with w = 2 and M = 1 is 2j, and it multiplies the *other*
+    # mesh current -- that term is the coupling, and nothing else in
+    # the loop could put an I2 in I1's equation.
+    assert (first.eq.lhs - first.eq.rhs).coeff(sp.Symbol("I2")) == -2 * sp.I
 
 
 def test_mesh_refuses_an_op_amp_and_says_to_use_nodal():

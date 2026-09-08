@@ -163,15 +163,36 @@ _NOT_TAUGHT_DEFAULT = "a two-port parameter block"
 
 def _refuse_for(elements: List[Element], method: str):
     """The coded reason a circuit is not one for this method, or None
-    when it may go ahead."""
+    when it may go ahead.
+
+    Since #332 a transformer, a two-port block or a coupled pair is no
+    longer a refusal for *nodal*: it is carried the augmented way, its
+    own relation standing as an extra equation beside the KCLs and its
+    own current as an extra unknown, which is what a textbook does. Only
+    two things are still refused, and both because the method genuinely
+    does not apply rather than because this code cannot manage:
+
+    * an op-amp in **mesh** -- its output current is supplied by the
+      op-amp rather than circulating in a loop, so there is no mesh
+      current to write. Every textbook uses nodal there;
+    * mutually coupled coils in **nodal** -- a coupled coil's relation
+      gives the *voltage* induced by another coil's current, which is a
+      term in a loop equation. Nodal would have to invert a coupled pair
+      to get either current in node voltages. Textbooks teach coupled
+      coils in the mesh chapter for exactly this reason, so the refusal
+      says so and points there.
+    """
     kinds = {e.kind for e in elements}
-    bad = sorted(kinds & (set(PORT_KINDS) | {"m"}))
-    if bad:
-        named = sorted({_NOT_TAUGHT.get(k, _NOT_TAUGHT_DEFAULT)
-                        for k in bad})
-        return _m(M.E_BH_NOT_TAUGHT_FOR, what=", ".join(named))
     if method == "mesh" and "o" in kinds:
         return _m(M.E_BH_MESH_OPAMP)
+    if method == "nodal" and "m" in kinds:
+        return _m(M.E_BH_MUTUAL_USE_MESH)
+    if method == "mesh":
+        ports = sorted(kinds & set(PORT_KINDS))
+        if ports:
+            named = sorted({_NOT_TAUGHT.get(k, _NOT_TAUGHT_DEFAULT)
+                            for k in ports})
+            return _m(M.E_BH_PORT_USE_NODAL, what=", ".join(named))
     return None
 
 
@@ -204,6 +225,19 @@ def nodal(elements: List[Element], domain: str, omega=None,
                       reason=_m(exc.code, **exc.args_map))
 
     refs = set(circ.references)
+
+    # #332: the elements the branch reader does not speak for -- a
+    # transformer, a two-port parameter block, an op-amp -- and the
+    # equations the engine wrote for each. They come in verbatim as
+    # extra rows, and whatever unknowns they name come in with them.
+    # This is the augmented method, and it is uniform: the code does not
+    # know a transformer from a two-port, only that neither current can
+    # be written in node voltages.
+    by_element: Dict[str, List[sp.Eq]] = {}
+    for idx, el in origin.items():
+        by_element.setdefault(el.name, []).append(circ.equations[idx])
+    special = [el for el in elements
+               if el.kind in PORT_KINDS and el.kind != "m"]
 
     # Branch currents that can be written in node voltages, and the
     # voltage-source branches that cannot.
@@ -369,8 +403,26 @@ def nodal(elements: List[Element], domain: str, omega=None,
             label = _m(M.N_BH_SUPERNODE_TIE, name=b.name, a=b.n1, b=b.n2)
         out.rows.append(Row("constraint", label, constraint[b.name]))
 
+    # #332: each special element's own relations, and the currents they
+    # name. The KCLs above already carry those currents -- `stamp_all`
+    # put them there -- so the system stays square: one extra equation
+    # for one extra unknown, which is the whole trick of the augmented
+    # method.
+    special_unknowns: List[sp.Symbol] = []
+    for el in special:
+        for eq in by_element.get(el.name, []):
+            shown = sp.Eq(sp.expand(eq.lhs.subs(subst)),
+                          sp.expand(eq.rhs.subs(subst)), evaluate=False)
+            out.rows.append(Row("element",
+                                _m(M.N_BH_ELEMENT_EQ, name=el.name), shown))
+            for sym in (shown.lhs - shown.rhs).free_symbols:
+                if (str(sym).startswith("i_") and sym in circ.unknowns
+                        and sym not in special_unknowns):
+                    special_unknowns.append(sym)
+
     out.unknowns = [u for u in circ.unknowns if str(u).startswith("v_")]
     out.unknowns += [b.i for b in vsource if b.name in external]
+    out.unknowns += [u for u in special_unknowns if u not in out.unknowns]
 
     # Backing out the branch currents is the last step of the method,
     # and it is also what lets the answers be compared.
