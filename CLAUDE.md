@@ -53,6 +53,18 @@ two packages would overwrite each other silently, and under a new
 import name every `from symbulator …` line would conflict on every
 merge from 9.
 
+**X14: `symbulator/byhand.py`**, the by-hand nodal and mesh systems
+behind X's By-Hand Equations card. It states **no component rule of its
+own** — it runs the real `Circuit.stamp_all()` and reads each branch's
+v-i relation back out of the equations the engine produced, by
+differentiation, so a domain rule added to `engine.py` appears there for
+free and the two cannot drift. It changes nothing in `engine.py`: the
+per-element bookkeeping comes from wrapping the `_stamp_<kind>` methods
+as instance attributes for one circuit. `schematic.py`'s `to_svg` gained
+an opt-in `loops=` argument that draws the mesh currents; with no
+`loops` the drawing is byte-identical to what it always produced. The
+account is X14 in the `local` repository's `NEXT_X.md`.
+
 ## Version 9 in, experiments out
 
     git fetch v9 && git merge v9/main        # a version 9 improvement, in
