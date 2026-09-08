@@ -51,6 +51,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import sympy as sp
 
+from . import messages as M
 from .elements import Element, PORT_KINDS
 from .engine import Circuit
 
@@ -58,8 +59,18 @@ from .engine import Circuit
 class BranchError(Exception):
     """A circuit's branches could not be read in this form -- a value
     that is not linear in its own current, an element whose relation
-    does not involve its own nodes. Callers are expected to turn this
-    into a sentence rather than let it reach a page."""
+    does not involve its own nodes.
+
+    Carries a message code and its arguments rather than a sentence
+    (#199): the package returns structured messages and the interface
+    puts them into words, which is what lets a reason reach a reader in
+    their own language. `str()` still renders the English, for a
+    traceback or a bug report."""
+
+    def __init__(self, code: int, **args):
+        self.code = code
+        self.args_map = args
+        super().__init__(M.render(code, args))
 
 
 def stamped(elements: List[Element], domain: str, omega=None,
@@ -139,7 +150,7 @@ def linear_part(expr, sym):
     """d(expr)/d(sym), with a check that expr really is linear in it."""
     d = sp.diff(expr, sym)
     if d.has(sym):
-        raise BranchError("a value here is not linear in the branch current")
+        raise BranchError(M.E_BH_NOT_LINEAR)
     return d
 
 
@@ -176,8 +187,7 @@ def read_branches(circ: Circuit, origin: Dict[int, Element]) -> List[Branch]:
             # relation. (A voltage source's equation does not mention
             # the current at all, which is exactly Z = 0.)
             if len(eqs) != 1:
-                raise BranchError(
-                    el.name + " does not have a single branch relation")
+                raise BranchError(M.E_BH_ONE_RELATION, name=el.name)
             eq = eqs[0]
             f = sp.expand(eq.lhs - eq.rhs)
             a1 = linear_part(f, u1) if u1.free_symbols else sp.Integer(0)
@@ -204,8 +214,7 @@ def read_branches(circ: Circuit, origin: Dict[int, Element]) -> List[Branch]:
                 a = -a2
                 excess = sp.expand((a1 + a2) * u1)
             if a == 0:
-                raise BranchError(
-                    el.name + "'s relation does not involve its own nodes")
+                raise BranchError(M.E_BH_NO_OWN_NODES, name=el.name)
             out.append(Branch(el.name, n1, n2, i_sym,
                               Z=sp.simplify(-b / a),
                               E=sp.simplify(-(c + excess) / a),

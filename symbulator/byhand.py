@@ -61,10 +61,24 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import sympy as sp
 
+from . import messages as M
 from .branches import (Branch, BranchError, close as _close,
                        read_branches as _branches, stamped as _traced)
 from .elements import Element, PORT_KINDS
 from .engine import _sym
+
+
+def _m(code: int, **args) -> Dict[str, object]:
+    """One message in the shape the app already renders (#199/#200):
+    the code, its arguments, and the catalogue's English beside them.
+
+    The English travels so that a page which has never seen this code --
+    a browser mid-deploy, an older offline build -- still shows a
+    sentence rather than nothing, and so that a harness, a traceback or
+    a downloaded `.txt` has something to print."""
+    return {"code": code,
+            "args": {k: str(v) for k, v in args.items()},
+            "text": M.render(code, args)}
 
 
 # --------------------------------------------------------------------
@@ -74,15 +88,22 @@ from .engine import _sym
 @dataclass
 class Row:
     """One written line: the equation, and the sentence a student would
-    write beside it ("KCL at node 2", "supermesh around I1 and I2")."""
+    write beside it ("KCL at node 2", "supermesh around I1 and I2").
+
+    `label` is a coded message, not a string -- see `_m`."""
     kind: str          # kcl | supernode | constraint | opamp | kvl |
                        # supermesh | mesh-constraint | bridge
-    label: str
+    label: Dict[str, object]
     eq: sp.Eq
 
     @property
     def plain(self) -> str:
         return "{0} = {1}".format(self.eq.lhs, self.eq.rhs)
+
+    @property
+    def label_text(self) -> str:
+        """The label's English, for a harness or a traceback."""
+        return str(self.label.get("text", "")) if self.label else ""
 
 
 @dataclass
@@ -91,7 +112,8 @@ class ByHand:
     method: str                     # "nodal" | "mesh"
     domain: str
     supported: bool = True
-    reason: str = ""                # why not, when supported is False
+    #: Why not, when `supported` is False: a coded message, or None.
+    reason: Optional[Dict[str, object]] = None
     rows: List[Row] = field(default_factory=list)
     unknowns: List[sp.Symbol] = field(default_factory=list)
     #: How the by-hand unknowns become the classic answer names --
@@ -108,7 +130,7 @@ class ByHand:
     #: Mesh names merged into one equation (mesh only), one per
     #: supermesh.
     supermeshes: List[List[str]] = field(default_factory=list)
-    notes: List[str] = field(default_factory=list)
+    notes: List[Dict[str, object]] = field(default_factory=list)
 
     @property
     def equations(self) -> List[sp.Eq]:
@@ -131,23 +153,25 @@ class ByHand:
 ByHandError = BranchError
 
 
-def _refuse_for(elements: List[Element], method: str) -> Optional[str]:
-    """The plain sentence for a circuit neither method should attempt,
-    or None when it may go ahead."""
+#: What a multi-terminal element is called in a refusal. The words are
+#: the app's to translate, so they travel as a vocabulary key rather
+#: than as prose (`srv.` in `i18n/en.json`, the same route the answer
+#: labels take).
+_NOT_TAUGHT = {"m": "mutual inductance", "t": "a transformer"}
+_NOT_TAUGHT_DEFAULT = "a two-port parameter block"
+
+
+def _refuse_for(elements: List[Element], method: str):
+    """The coded reason a circuit is not one for this method, or None
+    when it may go ahead."""
     kinds = {e.kind for e in elements}
     bad = sorted(kinds & (set(PORT_KINDS) | {"m"}))
     if bad:
-        what = {"m": "mutual inductance", "t": "a transformer"}
-        named = sorted({what.get(k, "a two-port parameter block")
+        named = sorted({_NOT_TAUGHT.get(k, _NOT_TAUGHT_DEFAULT)
                         for k in bad})
-        return ("This circuit contains " + ", ".join(named) + ", which "
-                + method + " analysis by hand is not taught for. The "
-                "classic Symbulator answers above are unaffected.")
+        return _m(M.E_BH_NOT_TAUGHT_FOR, what=", ".join(named))
     if method == "mesh" and "o" in kinds:
-        return ("This circuit contains an op-amp. Its output current is "
-                "supplied by the op-amp rather than flowing round a mesh, "
-                "so mesh analysis by hand does not apply. Nodal analysis "
-                "does — try that instead.")
+        return _m(M.E_BH_MESH_OPAMP)
     return None
 
 
@@ -177,8 +201,7 @@ def nodal(elements: List[Element], domain: str, omega=None,
         branches = _branches(circ, origin)
     except ByHandError as exc:
         return ByHand(method="nodal", domain=domain, supported=False,
-                      reason="A by-hand nodal system could not be built: "
-                             + str(exc) + ".")
+                      reason=_m(exc.code, **exc.args_map))
 
     refs = set(circ.references)
 
@@ -219,10 +242,7 @@ def nodal(elements: List[Element], domain: str, omega=None,
         if n_out not in refs:
             dropped.add(n_out)
         opamp_rows.append(Row(
-            "opamp",
-            el.name + ": the inputs are held equal, and the output node "
-            + n_out + " carries whatever current " + el.name
-            + " supplies, so it gets no KCL",
+            "opamp", _m(M.N_BH_OPAMP, name=el.name, node=n_out),
             sp.Eq(circ.v(n_plus), circ.v(n_minus), evaluate=False)))
 
     # Supernodes: nodes tied together by a voltage source. A group that
@@ -324,11 +344,10 @@ def nodal(elements: List[Element], domain: str, omega=None,
             total += kcl[n]
         total = sp.expand(sp.expand(total).subs(subst))
         if len(live) == 1:
-            label = "KCL at node " + live[0]
+            label = _m(M.N_BH_KCL_NODE, node=live[0])
             kind = "kcl"
         else:
-            label = ("KCL around the supernode enclosing nodes "
-                     + ", ".join(live))
+            label = _m(M.N_BH_KCL_SUPERNODE, nodes=", ".join(live))
             kind = "supernode"
             # The whole group is enclosed, including any node whose own
             # KCL was dropped for an op-amp: the enclosure is a picture
@@ -343,15 +362,11 @@ def nodal(elements: List[Element], domain: str, omega=None,
     for b in vsource:
         if b.n1 in refs or b.n2 in refs:
             fixed = b.n1 if b.n2 in refs else b.n2
-            label = b.name + " fixes node " + fixed + " against the reference"
+            label = _m(M.N_BH_SOURCE_TO_REF, name=b.name, node=fixed)
         elif b.name in external:
-            label = (b.name + "'s own equation. Its current is named "
-                     "elsewhere in the circuit, so it is carried as an "
-                     "unknown of its own and nodes " + b.n1 + " and "
-                     + b.n2 + " keep their separate KCLs")
+            label = _m(M.N_BH_SOURCE_NAMED, name=b.name, a=b.n1, b=b.n2)
         else:
-            label = (b.name + "'s own equation, the constraint that comes "
-                     "with the supernode over " + b.n1 + " and " + b.n2)
+            label = _m(M.N_BH_SUPERNODE_TIE, name=b.name, a=b.n1, b=b.n2)
         out.rows.append(Row("constraint", label, constraint[b.name]))
 
     out.unknowns = [u for u in circ.unknowns if str(u).startswith("v_")]
@@ -362,7 +377,7 @@ def nodal(elements: List[Element], domain: str, omega=None,
     for b in branches:
         if b.i in subst:
             out.bridge.append(Row(
-                "bridge", "the current through " + b.name,
+                "bridge", _m(M.N_BH_BRIDGE, name=b.name),
                 sp.Eq(b.i, subst[b.i], evaluate=False)))
         elif b.is_current_source:
             # Known from the start, but worth writing down: it is one
@@ -371,7 +386,7 @@ def nodal(elements: List[Element], domain: str, omega=None,
             # source's value may name another branch's current, which
             # has to come back to node voltages like everything else.
             out.bridge.append(Row(
-                "bridge", "the current through " + b.name,
+                "bridge", _m(M.N_BH_BRIDGE, name=b.name),
                 sp.Eq(b.i, sp.expand(_close(b.source_current, subst)),
                       evaluate=False)))
     return out
@@ -517,9 +532,9 @@ def _walk(cycle: List[int], branches: List["Branch"]) -> List[Tuple[int, int]]:
                 remaining.pop(pos)
                 break
         else:
-            raise ByHandError("a mesh could not be traced as a single loop")
+            raise ByHandError(M.E_BH_LOOP_NOT_TRACED)
     if cur != start:
-        raise ByHandError("a mesh did not close")
+        raise ByHandError(M.E_BH_LOOP_NOT_CLOSED)
     return walk
 
 
@@ -649,13 +664,11 @@ def mesh(elements: List[Element], domain: str, omega=None,
         cycles = _cycle_basis(branches)
         if not cycles:
             return ByHand(method="mesh", domain=domain, supported=False,
-                          reason="This circuit has no closed loop to write "
-                                 "a mesh equation around.")
+                          reason=_m(M.E_BH_NO_LOOP))
         walks = _orient([_walk(c, branches) for c in cycles])
     except ByHandError as exc:
         return ByHand(method="mesh", domain=domain, supported=False,
-                      reason="A by-hand mesh system could not be built: "
-                             + str(exc) + ".")
+                      reason=_m(exc.code, **exc.args_map))
 
     mesh_syms = [_sym("I{0}".format(k + 1)) for k in range(len(walks))]
     out.unknowns = list(mesh_syms)
@@ -686,10 +699,7 @@ def mesh(elements: List[Element], domain: str, omega=None,
             # an equation is worse than a sentence.
             return ByHand(
                 method="mesh", domain=domain, supported=False,
-                reason=("The current source " + branches[k].name + " sits on "
-                        "a branch that no mesh passes through, so there is "
-                        "no mesh current for it to set. Nodal analysis "
-                        "handles this circuit."))
+                reason=_m(M.E_BH_SOURCE_OFF_MESH, name=branches[k].name))
         i_map[branches[k].i] = sp.Integer(0)
     # ...and every node voltage likewise. Mesh analysis has no node
     # voltages of its own, but it can still reach one the way a student
@@ -719,11 +729,8 @@ def mesh(elements: List[Element], domain: str, omega=None,
     if stranded:
         return ByHand(
             method="mesh", domain=domain, supported=False,
-            reason=("A source in this circuit is controlled by "
-                    + ", ".join(n[2:] for n in stranded)
-                    + ", a node voltage. Mesh analysis works in mesh "
-                      "currents and has no node voltage to give it, so "
-                      "this circuit is one for nodal analysis instead."))
+            reason=_m(M.E_BH_NODE_CONTROLLED,
+                      names=", ".join(n[2:] for n in stranded)))
 
     # A current source's drop is unknown, and the method's job is to get
     # rid of it. Each `u_` appears in the KVL of every mesh whose loop
@@ -789,12 +796,10 @@ def mesh(elements: List[Element], domain: str, omega=None,
         left = sorted({str(s) for s in total.free_symbols
                        if str(s).startswith("u_")})
         if len(names) == 1:
-            label = "KVL around mesh " + names[0]
+            label = _m(M.N_BH_KVL_MESH, mesh=names[0])
             kind = "kvl"
         else:
-            label = ("KVL around the supermesh formed by "
-                     + " and ".join(names)
-                     + " -- the shared current source's drop cancels")
+            label = _m(M.N_BH_KVL_SUPERMESH, meshes=" and ".join(names))
             kind = "supermesh"
             out.supermeshes.append(list(names))
         for name in left:
@@ -804,10 +809,7 @@ def mesh(elements: List[Element], domain: str, omega=None,
             # duplicated unknown outright.
             if _sym(name) in out.unknowns:
                 continue
-            out.notes.append(
-                "The drop across " + name[2:] + " did not eliminate "
-                "between the loops sharing it, so it is carried as an "
-                "unknown of its own.")
+            out.notes.append(_m(M.N_BH_DROP_KEPT, name=name[2:]))
             out.unknowns.append(_sym(name))
         out.rows.append(Row(kind, label, sp.Eq(total, 0, evaluate=False)))
 
@@ -815,8 +817,7 @@ def mesh(elements: List[Element], domain: str, omega=None,
     for b in sorted(drop_sym, key=lambda k: branches[k].name):
         br = branches[b]
         out.rows.append(Row(
-            "mesh-constraint",
-            br.name + " sets the current in the branch it occupies",
+            "mesh-constraint", _m(M.N_BH_MESH_CONSTRAINT, name=br.name),
             sp.Eq(in_branch[b],
                   sp.expand(_close(br.source_current, i_map)),
                   evaluate=False)))
@@ -824,13 +825,11 @@ def mesh(elements: List[Element], domain: str, omega=None,
     for k, br in enumerate(branches):
         if k in in_branch:
             out.bridge.append(Row(
-                "bridge", "the current through " + br.name,
+                "bridge", _m(M.N_BH_BRIDGE, name=br.name),
                 sp.Eq(br.i, sp.expand(in_branch[k]), evaluate=False)))
         else:
             out.bridge.append(Row(
-                "bridge",
-                "the current through " + br.name + " -- no mesh runs "
-                "through it, so none flows",
+                "bridge", _m(M.N_BH_BRIDGE_NO_MESH, name=br.name),
                 sp.Eq(br.i, sp.Integer(0), evaluate=False)))
 
     # The same guard over the finished system: a constraint can strand
@@ -841,11 +840,8 @@ def mesh(elements: List[Element], domain: str, omega=None,
     if left_over:
         return ByHand(
             method="mesh", domain=domain, supported=False,
-            reason=("A source in this circuit is controlled by "
-                    + ", ".join(n[2:] for n in left_over)
-                    + ", a node voltage. Mesh analysis works in mesh "
-                      "currents and has no node voltage to give it, so "
-                      "this circuit is one for nodal analysis instead."))
+            reason=_m(M.E_BH_NODE_CONTROLLED,
+                      names=", ".join(n[2:] for n in left_over)))
 
     out.loops = {str(mesh_syms[k]): [(branches[b].name, s) for b, s in walk]
                  for k, walk in enumerate(walks)}
@@ -876,7 +872,8 @@ class Comparison:
     which would make the whole card untrustworthy. So an inconclusive
     comparison says so."""
     verdict: str                    # agrees | differs | unsure | unsolved
-    message: str
+    #: A coded message (see `_m`), or None for a run with nothing to say.
+    message: Optional[Dict[str, object]]
     checks: List[Check] = field(default_factory=list)
     solution: Dict[str, sp.Expr] = field(default_factory=dict)
 
@@ -890,10 +887,10 @@ def solve(bh: ByHand) -> Dict[sp.Symbol, sp.Expr]:
     when it has no single solution -- the caller turns that into a
     message rather than letting it reach the page."""
     if not bh.supported:
-        raise ByHandError(bh.reason)
+        raise ByHandError(int(bh.reason["code"]))
     sols = sp.solve(bh.equations, bh.unknowns, dict=True)
     if not sols:
-        raise ByHandError("the system has no solution")
+        raise ByHandError(M.N_BH_UNSOLVED)
     return sols[0]
 
 
@@ -953,17 +950,12 @@ def compare(bh: ByHand, classic: Dict[str, sp.Expr]) -> Comparison:
         return Comparison("unsupported", bh.reason)
     try:
         solution = solve(bh)
-    except ByHandError as exc:
-        return Comparison(
-            "unsolved",
-            "The by-hand system was written, but solving it did not "
-            "succeed: " + str(exc) + ". The classic answers above stand.")
-    except Exception as exc:                # pragma: no cover - defensive
-        return Comparison(
-            "unsolved",
-            "The by-hand system was written, but solving it did not "
-            "succeed (" + type(exc).__name__ + "). The classic answers "
-            "above stand.")
+    except (ByHandError, Exception):
+        # Any failure to solve is one sentence: the system was written,
+        # it did not come out, and the classic answers stand. Which
+        # exception it was is not the reader's business and is not
+        # translatable prose.
+        return Comparison("unsolved", _m(M.N_BH_UNSOLVED))
 
     values: Dict[sp.Symbol, sp.Expr] = dict(solution)
     for row in bh.bridge:
@@ -986,29 +978,37 @@ def compare(bh: ByHand, classic: Dict[str, sp.Expr]) -> Comparison:
 
     solved = {str(k): v for k, v in solution.items()}
     if not checks:
-        return Comparison("unsure",
-                          "The by-hand system solved, but it produced none "
-                          "of the quantities the classic solve reports, so "
-                          "there was nothing to check it against.",
+        return Comparison("unsure", _m(M.N_BH_NOTHING_CHECKED),
                           checks, solved)
     if any(c.verdict == "differs" for c in checks):
         names = ", ".join(c.name for c in checks if c.verdict == "differs")
-        return Comparison(
-            "differs",
-            "The by-hand answers do not match the classic solve for "
-            + names + ". The classic answers above are the ones to "
-            "trust; the by-hand system is the one at fault.",
-            checks, solved)
+        return Comparison("differs", _m(M.N_BH_DIFFERS, names=names),
+                          checks, solved)
     if any(c.verdict == "unsure" for c in checks):
-        return Comparison(
-            "unsure",
-            "The by-hand answers could not be shown equal to the classic "
-            "ones by algebra, and no numerical test point settled it "
-            "either. This is not a disagreement -- it is an unproven "
-            "match.",
-            checks, solved)
-    return Comparison(
-        "agrees",
-        "Every one of the " + str(len(checks)) + " quantities the by-hand "
-        "system produces matches the classic Symbulator solve.",
-        checks, solved)
+        return Comparison("unsure", _m(M.N_BH_UNSURE), checks, solved)
+    return Comparison("agrees", _m(M.N_BH_AGREES, n=len(checks)),
+                      checks, solved)
+
+
+def shorter_route(nodal_system: ByHand, mesh_system: ByHand):
+    """Which of the two methods writes fewer equations for this circuit,
+    as a coded message -- or that one of them is not offered at all.
+
+    Roberto asked, 8 Sep 2026: *how does the user know when to use nodal
+    and when to use mesh?* Until now they found out by running one and
+    reading the refusal. Counting is what a first course actually
+    teaches -- take the method with fewer equations -- and building a
+    system is cheap: it is the *solve* that costs, and this does not
+    solve either of them."""
+    if not nodal_system.supported and not mesh_system.supported:
+        return None                         # both refusals speak for
+    if not mesh_system.supported:           # themselves
+        return _m(M.N_BH_NO_MESH_HERE)
+    if not nodal_system.supported:
+        return _m(M.N_BH_NO_NODAL_HERE)
+    n, m = len(nodal_system.rows), len(mesh_system.rows)
+    if n == m:
+        return _m(M.N_BH_METHODS_EVEN, n=n)
+    if m < n:
+        return _m(M.N_BH_MESH_SHORTER, mesh=m, nodal=n)
+    return _m(M.N_BH_NODAL_SHORTER, mesh=m, nodal=n)

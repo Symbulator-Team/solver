@@ -15,6 +15,7 @@ import pytest
 import sympy as sp
 
 from symbulator import ac, byhand, dc, fd
+from symbulator import messages as M
 from symbulator.elements import parse_circuit
 
 
@@ -49,6 +50,7 @@ def test_agrees_with_the_classic_solve(desc, method):
     system, verdict = _run(desc, method)
     assert system.supported, system.reason
     assert verdict.verdict == "agrees", verdict.message
+    assert verdict.message["code"] == M.N_BH_AGREES
     assert verdict.checks, "nothing was actually compared"
 
 
@@ -125,7 +127,8 @@ def test_a_current_source_on_no_mesh_is_refused_not_guessed():
     desc = "e1,1,0,10\nr1,1,0,5\nj1,1,2,2\nr2,2,3,3"
     system = byhand.mesh(parse_circuit(desc), "dc")
     assert not system.supported
-    assert "no mesh passes through" in system.reason
+    assert system.reason["code"] == M.E_BH_SOURCE_OFF_MESH
+    assert "no mesh passes through" in system.reason["text"]
     assert not system.rows
 
 
@@ -184,7 +187,12 @@ def test_a_source_whose_current_is_named_keeps_both_kcls():
 def test_refusals_are_sentences_not_exceptions(desc, method):
     system = getattr(byhand, method)(parse_circuit(desc), "dc")
     assert not system.supported
-    assert system.reason.endswith(".")
+    # A code, not a sentence: the package returns structured messages
+    # and the app puts them into words (#199). The English travels
+    # beside the code for a traceback and for a page that has never seen
+    # it, and is still a whole sentence.
+    assert system.reason["code"] == M.E_BH_NOT_TAUGHT_FOR
+    assert system.reason["text"].endswith(".")
     assert not system.rows
     # A refusal reaches `compare` as a verdict, never as a raise.
     assert byhand.compare(system, {}).verdict == "unsupported"
@@ -194,8 +202,9 @@ def test_mesh_refuses_an_op_amp_and_says_to_use_nodal():
     desc = "e1,1,0,1\nr1,1,2,1'k\nr2,2,3,10'k\no1,0,2,3"
     system = byhand.mesh(parse_circuit(desc), "dc")
     assert not system.supported
-    assert "op-amp" in system.reason
-    assert "nodal" in system.reason.lower()
+    assert system.reason["code"] == M.E_BH_MESH_OPAMP
+    assert "op-amp" in system.reason["text"]
+    assert "nodal" in system.reason["text"].lower()
 
 
 def test_nodal_handles_an_op_amp():
@@ -222,20 +231,59 @@ def test_a_wrong_system_is_reported_as_differing():
                                 sp.Eq(first.eq.lhs + sp.Symbol("v_2"), 0))
     verdict = byhand.compare(broken, dc(LADDER).values)
     assert verdict.verdict == "differs"
+    assert verdict.message["code"] == M.N_BH_DIFFERS
     assert verdict.differing
 
 
 def test_an_unsolvable_system_says_so_rather_than_raising():
-    empty = byhand.ByHand(method="nodal", domain="dc",
-                          rows=[byhand.Row("kcl", "impossible",
-                                           sp.Eq(sp.Integer(1), 0))],
-                          unknowns=[sp.Symbol("v_1")])
+    empty = byhand.ByHand(
+        method="nodal", domain="dc",
+        rows=[byhand.Row("kcl", {"code": M.N_BH_KCL_NODE, "args": {},
+                                 "text": "impossible"},
+                         sp.Eq(sp.Integer(1), 0))],
+        unknowns=[sp.Symbol("v_1")])
     verdict = byhand.compare(empty, {"v_1": sp.Integer(0)})
     assert verdict.verdict == "unsolved"
-    assert "classic answers above stand" in verdict.message
+    assert verdict.message["code"] == M.N_BH_UNSOLVED
+    assert "classic answers above stand" in verdict.message["text"]
 
 
 def test_a_symbolic_circuit_still_compares():
     system, verdict = _run(SYMBOLIC, "nodal")
     assert verdict.verdict == "agrees", verdict.message
     assert any(c.how in ("exact", "numeric") for c in verdict.checks)
+
+
+# --- the messages themselves (#329) -------------------------------------
+
+def test_every_row_and_verdict_carries_a_code():
+    """Nothing the package says reaches the app as bare prose. A code is
+    what the thirteen languages are keyed on, so a label or a verdict
+    that forgot one would be permanently English."""
+    for desc, method in ((SUPERNODE, "nodal"), (SUPERMESH, "mesh"),
+                         (BRIDGE, "nodal"), (BRIDGE, "mesh")):
+        system, verdict = _run(desc, method)
+        for row in list(system.rows) + list(system.bridge):
+            assert isinstance(row.label, dict), row
+            assert row.label["code"] in M.CATALOGUE
+            assert row.label["text"]
+        assert verdict.message["code"] in M.CATALOGUE
+
+
+def test_the_shorter_route_is_named():
+    """Roberto, 8 Sep 2026: how does a reader know which method to use?
+    By being told which writes fewer equations -- built, never solved."""
+    els = parse_circuit(BRIDGE)
+    n, m = byhand.nodal(els, "dc"), byhand.mesh(els, "dc")
+    said = byhand.shorter_route(n, m)
+    assert said["code"] in (M.N_BH_MESH_SHORTER, M.N_BH_NODAL_SHORTER,
+                            M.N_BH_METHODS_EVEN)
+    # The bridge circuit is three meshes and three live nodes.
+    assert said["args"].get("mesh") == "3" or said["args"].get("n") == "3"
+
+
+def test_a_method_that_is_not_offered_is_named_as_such():
+    els = parse_circuit("e1,1,0,1\nr1,1,2,1000\nr2,2,3,10000\no1,0,2,3")
+    said = byhand.shorter_route(byhand.nodal(els, "dc"),
+                                byhand.mesh(els, "dc"))
+    assert said["code"] == M.N_BH_NO_MESH_HERE

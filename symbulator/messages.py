@@ -117,6 +117,58 @@ E_NO_SHORT_CIRCUIT    = 502
 E_SPICE_EMPTY         = 601
 E_SPICE_NOTHING       = 602
 
+# --- 7xx: byhand.py (#329) --------------------------------------------
+# The by-hand systems say more than any other part of the package: every
+# line of a nodal or mesh system carries a sentence beside it, the
+# comparison with the classic solve is a sentence of its own, and so is
+# every reason a method is not offered. All of it is reader-facing and
+# almost none of it is an error, which is exactly why severity is a
+# field here and not a range.
+#
+# 70x  the sentence beside one written line
+# 71x  the verdict on a whole run, and which method is the shorter route
+# 72x  why a method is not offered for this circuit
+# 73x  why a system could not be built at all (raised, then reported)
+N_BH_KCL_NODE          = 701
+N_BH_KCL_SUPERNODE     = 702
+N_BH_OPAMP             = 703
+N_BH_SOURCE_TO_REF     = 704
+N_BH_SUPERNODE_TIE     = 705
+N_BH_SOURCE_NAMED      = 706
+N_BH_KVL_MESH          = 707
+N_BH_KVL_SUPERMESH     = 708
+N_BH_MESH_CONSTRAINT   = 709
+N_BH_BRIDGE            = 710
+N_BH_BRIDGE_NO_MESH    = 711
+N_BH_DROP_KEPT         = 712
+
+N_BH_AGREES            = 713
+N_BH_DIFFERS           = 714
+N_BH_UNSURE            = 715
+N_BH_UNSOLVED          = 716
+N_BH_NOTHING_CHECKED   = 717
+N_BH_MESH_SHORTER      = 718
+N_BH_NODAL_SHORTER     = 719
+N_BH_METHODS_EVEN      = 720
+N_BH_NO_MESH_HERE      = 721
+N_BH_NO_NODAL_HERE     = 722
+
+E_BH_NOT_TAUGHT_FOR    = 723
+E_BH_MESH_OPAMP        = 724
+E_BH_NO_LOOP           = 725
+E_BH_NODE_CONTROLLED   = 726
+E_BH_SOURCE_OFF_MESH   = 727
+E_BH_DOMAIN            = 728
+E_BH_NO_MODULE         = 729
+E_BH_PICK_METHOD       = 730
+
+E_BH_NOT_LINEAR        = 731
+E_BH_NO_OWN_NODES      = 732
+E_BH_NOT_A_DIFFERENCE  = 733
+E_BH_ONE_RELATION      = 734
+E_BH_LOOP_NOT_TRACED   = 735
+E_BH_LOOP_NOT_CLOSED   = 736
+
 
 CATALOGUE = {
     # --- 2xx elements -------------------------------------------------
@@ -288,6 +340,131 @@ CATALOGUE = {
     E_SPICE_NOTHING: ("error",
                       "No translatable elements found in the SPICE "
                       "netlist. %{warnings}"),
+
+    # --- 7xx by-hand equations (#329) ---------------------------------
+    N_BH_KCL_NODE: ("note", "KCL at node %{node}"),
+    N_BH_KCL_SUPERNODE: ("note",
+                         "KCL around the supernode enclosing nodes "
+                         "%{nodes}"),
+    N_BH_OPAMP: ("note",
+                 "%{name}: the inputs are held equal, and the output "
+                 "node %{node} carries whatever current %{name} "
+                 "supplies, so it gets no KCL"),
+    N_BH_SOURCE_TO_REF: ("note",
+                         "%{name} fixes node %{node} against the "
+                         "reference"),
+    N_BH_SUPERNODE_TIE: ("note",
+                         "%{name}'s own equation, the constraint that "
+                         "comes with the supernode over %{a} and %{b}"),
+    N_BH_SOURCE_NAMED: ("note",
+                        "%{name}'s own equation. Its current is named "
+                        "elsewhere in the circuit, so it is carried as "
+                        "an unknown of its own and nodes %{a} and %{b} "
+                        "keep their separate KCLs"),
+    N_BH_KVL_MESH: ("note", "KVL around mesh %{mesh}"),
+    N_BH_KVL_SUPERMESH: ("note",
+                         "KVL around the supermesh formed by %{meshes} "
+                         "-- the shared current source's drop cancels"),
+    N_BH_MESH_CONSTRAINT: ("note",
+                           "%{name} sets the current in the branch it "
+                           "occupies"),
+    N_BH_BRIDGE: ("note", "the current through %{name}"),
+    N_BH_BRIDGE_NO_MESH: ("note",
+                          "the current through %{name} -- no mesh runs "
+                          "through it, so none flows"),
+    N_BH_DROP_KEPT: ("warning",
+                     "The drop across %{name} did not eliminate between "
+                     "the loops sharing it, so it is carried as an "
+                     "unknown of its own."),
+
+    N_BH_AGREES: ("note",
+                  "Every one of the %{n} quantities the by-hand system "
+                  "produces matches the classic Symbulator solve."),
+    N_BH_DIFFERS: ("warning",
+                   "The by-hand answers do not match the classic solve "
+                   "for %{names}. The classic answers above are the ones "
+                   "to trust; the by-hand system is the one at fault."),
+    N_BH_UNSURE: ("warning",
+                  "The by-hand answers could not be shown equal to the "
+                  "classic ones by algebra, and no numerical test point "
+                  "settled it either. This is not a disagreement -- it "
+                  "is an unproven match."),
+    N_BH_UNSOLVED: ("warning",
+                    "The by-hand system was written, but solving it did "
+                    "not succeed. The classic answers above stand."),
+    N_BH_NOTHING_CHECKED: ("warning",
+                           "The by-hand system solved, but it produced "
+                           "none of the quantities the classic solve "
+                           "reports, so there was nothing to check it "
+                           "against."),
+    N_BH_MESH_SHORTER: ("note",
+                        "Mesh analysis writes %{mesh} equations for this "
+                        "circuit and nodal writes %{nodal}. Mesh is the "
+                        "shorter route here."),
+    N_BH_NODAL_SHORTER: ("note",
+                         "Nodal analysis writes %{nodal} equations for this "
+                         "circuit and mesh writes %{mesh}. Nodal is the "
+                         "shorter route here."),
+    N_BH_METHODS_EVEN: ("note",
+                        "Nodal and mesh each write %{n} equations for "
+                        "this circuit, so neither is shorter."),
+    N_BH_NO_MESH_HERE: ("note",
+                        "Mesh analysis is not offered for this circuit."),
+    N_BH_NO_NODAL_HERE: ("note",
+                         "Nodal analysis is not offered for this "
+                         "circuit."),
+
+    E_BH_NOT_TAUGHT_FOR: ("note",
+                          "This circuit contains %{what}, which by-hand "
+                          "analysis is not taught for. The classic "
+                          "Symbulator answers above are unaffected."),
+    E_BH_MESH_OPAMP: ("note",
+                      "This circuit contains an op-amp. Its output "
+                      "current is supplied by the op-amp rather than "
+                      "flowing round a mesh, so mesh analysis by hand "
+                      "does not apply. Nodal analysis does -- try that "
+                      "instead."),
+    E_BH_NO_LOOP: ("note",
+                   "This circuit has no closed loop to write a mesh "
+                   "equation around."),
+    E_BH_NODE_CONTROLLED: ("note",
+                           "A source in this circuit is controlled by "
+                           "%{names}, a node voltage. Mesh analysis "
+                           "works in mesh currents and has no node "
+                           "voltage to give it, so this circuit is one "
+                           "for nodal analysis instead."),
+    E_BH_SOURCE_OFF_MESH: ("note",
+                           "The current source %{name} sits on a branch "
+                           "that no mesh passes through, so there is no "
+                           "mesh current for it to set. Nodal analysis "
+                           "handles this circuit."),
+    E_BH_DOMAIN: ("note",
+                  "By-hand equations are written for DC, AC and FD. A "
+                  "transient is solved in the s-domain and transformed "
+                  "back into time, so the system a student would write "
+                  "for it is the s-domain one -- run this circuit in FD "
+                  "to see that system."),
+    E_BH_NO_MODULE: ("error",
+                     "This build of Symbulator has no by-hand analysis. "
+                     "The classic solve above is unaffected."),
+    E_BH_PICK_METHOD: ("error", "Choose nodal or mesh analysis."),
+
+    E_BH_NOT_LINEAR: ("note",
+                      "a value in this circuit is not linear in the "
+                      "branch current"),
+    E_BH_NO_OWN_NODES: ("note",
+                        "%{name}'s relation does not involve its own "
+                        "nodes"),
+    E_BH_NOT_A_DIFFERENCE: ("note",
+                            "%{name} does not depend on its terminals "
+                            "as a difference"),
+    E_BH_ONE_RELATION: ("note",
+                        "%{name} does not have a single branch "
+                        "relation"),
+    E_BH_LOOP_NOT_TRACED: ("note",
+                           "a mesh could not be traced as a single "
+                           "loop"),
+    E_BH_LOOP_NOT_CLOSED: ("note", "a mesh did not close"),
 }
 
 
