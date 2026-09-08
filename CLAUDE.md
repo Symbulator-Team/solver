@@ -44,7 +44,11 @@ rather than indexing `fields` by position for these kinds; the kind
 table `_IDENTIFIER_FIELD_IDX` is right only for the two-node form.
 `tests/test_four_node_ports.py` and the nine four-node cases in
 `test_spice_groundtruth.py` (ahkab, installed `--no-deps` in
-`Application\vX\.venv`) are the proof.
+`Application\vX\.venv`) are the proof. **ahkab is a test-time
+second opinion only** -- GPLv2 against Symbulator's MIT, never a
+dependency, never shipped, and no code or design taken from it; the
+module skips itself where ahkab is absent, which is why X's suite
+reports one skip where version 9's does not.
 
 **Do not publish a second package to PyPI.** `symbulator` on PyPI is
 version 9's name and Roberto's to release, and he declined a
