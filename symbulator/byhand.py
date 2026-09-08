@@ -61,8 +61,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import sympy as sp
 
+from .branches import (Branch, BranchError, close as _close,
+                       read_branches as _branches, stamped as _traced)
 from .elements import Element, PORT_KINDS
-from .engine import Circuit, _sym
+from .engine import _sym
 
 
 # --------------------------------------------------------------------
@@ -106,190 +108,10 @@ class ByHand:
         return [r.eq for r in self.rows]
 
 
-class ByHandError(Exception):
-    """A by-hand system could not be built. Always caught and turned
-    into `ByHand(supported=False, reason=...)` at the entry points."""
-
-
-# --------------------------------------------------------------------
-# Reading the engine's own stamp back out
-# --------------------------------------------------------------------
-
-def _traced(elements: List[Element], domain: str, omega=None,
-            suffix: str = "si", references: Sequence[str] = ()):
-    """Stamp the circuit for real, recording which element produced
-    which equation.
-
-    `Circuit.stamp_all` dispatches through `getattr(self, "_stamp_" +
-    kind)`, so wrapping those as *instance* attributes shadows the class
-    methods for this one circuit and records the range of equations each
-    element appended -- without the engine knowing this module exists.
-    The known-value substitution at the end of `stamp_all` rebuilds the
-    list at the same length, so the indices stay valid."""
-    circ = Circuit(elements, domain, omega=omega, suffix=suffix,
-                   references=references)
-    origin: Dict[int, Element] = {}
-
-    def record(orig):
-        def wrapped(e: Element) -> None:
-            before = len(circ.equations)
-            orig(e)
-            for i in range(before, len(circ.equations)):
-                origin[i] = e
-        return wrapped
-
-    for kind in {e.kind for e in elements}:
-        method = getattr(circ, "_stamp_" + kind, None)
-        if method is not None:
-            setattr(circ, "_stamp_" + kind, record(method))
-
-    circ.stamp_all()
-    return circ, origin
-
-
-@dataclass
-class Branch:
-    """One two-terminal branch, in the single form both methods need."""
-    name: str
-    n1: str
-    n2: str
-    i: sp.Symbol                 # the classic answer symbol, i_<name>
-    Z: Optional[sp.Expr]         # None for a current-source branch
-    E: sp.Expr                   # series source term, drop n1->n2
-    source_current: Optional[sp.Expr] = None   # set iff Z is None
-    #: The engine's own equation for this branch, where it had one --
-    #: shown verbatim rather than re-printed from Z and E.
-    eq: Optional[sp.Eq] = None
-
-    @property
-    def is_current_source(self) -> bool:
-        return self.Z is None
-
-    @property
-    def is_ideal_vsource(self) -> bool:
-        return self.Z is not None and sp.simplify(self.Z) == 0
-
-
-def _close(expr, mapping: Dict[sp.Symbol, sp.Expr], rounds: int = 8):
-    """Substitute until nothing changes.
-
-    A dependent source's value may name another branch's current --
-    `jd,1,2,i_ro/4` -- and that current is not one of either method's
-    unknowns: nodal wants it in node voltages, mesh in mesh currents.
-    One pass is usually enough, but a source controlled by a branch that
-    is itself a controlled source needs another, so this runs to a fixed
-    point (bounded, since a source controlled by its own current would
-    otherwise spin here)."""
-    for _ in range(rounds):
-        stepped = expr.subs(mapping)
-        if stepped == expr:
-            return expr
-        expr = stepped
-    return expr
-
-
-def _linear_part(expr, sym):
-    """d(expr)/d(sym), with a check that expr really is linear in it."""
-    d = sp.diff(expr, sym)
-    if d.has(sym):
-        raise ByHandError("a value here is not linear in the branch current")
-    return d
-
-
-def _branches(circ: Circuit, origin: Dict[int, Element]) -> List[Branch]:
-    """Every two-terminal branch as `v(n1) - v(n2) = Z*i + E`, read out
-    of what the engine stamped. See the module docstring."""
-    by_element: Dict[str, List[sp.Eq]] = {}
-    for idx, el in origin.items():
-        by_element.setdefault(el.name, []).append(circ.equations[idx])
-
-    out: List[Branch] = []
-    for el in circ.elements:
-        if el.kind in ("m", "o") or el.kind in PORT_KINDS:
-            continue                      # handled, or refused, elsewhere
-        n1, n2 = el.n1, el.n2
-        if n1 == n2:
-            continue                      # degenerate self-loop
-        i_sym = circ.i_symbol(el.name)
-        u1, u2 = circ.v(n1), circ.v(n2)
-        # A reference node's voltage is the literal 0, so that terminal
-        # carries no coefficient and there is nothing to check it
-        # against. With neither terminal on a reference, a genuine
-        # two-terminal component must depend on the two *only as their
-        # difference* -- and the check below is what tells one apart
-        # from a dependent source that happens to sit between the same
-        # two nodes. See the `y1 + y2` test further down: a VCCS reading
-        # the voltage at its own left-hand node has y2 = 0, which reads
-        # exactly like a component until you ask for the difference.
-        spans = n1 not in circ.references and n2 not in circ.references
-        eqs = by_element.get(el.name, [])
-
-        if str(i_sym) in {str(u) for u in circ.unknowns}:
-            # A branch with a free current: its one equation is its v-i
-            # relation. (A voltage source's equation does not mention
-            # the current at all, which is exactly Z = 0.)
-            if len(eqs) != 1:
-                raise ByHandError(
-                    el.name + " does not have a single branch relation")
-            eq = eqs[0]
-            f = sp.expand(eq.lhs - eq.rhs)
-            a1 = _linear_part(f, u1) if u1.free_symbols else sp.Integer(0)
-            a2 = _linear_part(f, u2) if u2.free_symbols else sp.Integer(0)
-            b = _linear_part(f, i_sym)
-            c = f.subs({u1: 0, u2: 0, i_sym: 0})
-            # Rewrite f in the branch drop u = v(n1) - v(n2). With one
-            # terminal on a reference node that voltage is the literal
-            # 0 and the other side carries the whole coefficient.
-            # Otherwise substitute v(n1) = u + v(n2) (or the mirror when
-            # it is n1 whose coefficient vanished): whatever dependence
-            # is left over is *not* part of the component -- it is a
-            # dependent source reading a node voltage, which belongs in
-            # the source term E, not in a refusal. Rejecting it outright
-            # turned away three circuits whose only sin was a VCVS whose
-            # controlling node is one of its own terminals.
-            if not spans:
-                a = a1 if n2 in circ.references else -a2
-                excess = sp.Integer(0)
-            elif a1 != 0:
-                a = a1
-                excess = sp.expand((a1 + a2) * u2)
-            else:
-                a = -a2
-                excess = sp.expand((a1 + a2) * u1)
-            if a == 0:
-                raise ByHandError(
-                    el.name + "'s relation does not involve its own nodes")
-            out.append(Branch(el.name, n1, n2, i_sym,
-                              Z=sp.simplify(-b / a),
-                              E=sp.simplify(-(c + excess) / a),
-                              eq=eq))
-            continue
-
-        # No free current: the engine recorded the current directly --
-        # a capacitor (an admittance) or a current source (a constant).
-        known = circ.known.get("i_" + el.name)
-        if known is None:
-            continue
-        known = sp.expand(known)
-        y1 = _linear_part(known, u1) if u1.free_symbols else sp.Integer(0)
-        y2 = _linear_part(known, u2) if u2.free_symbols else sp.Integer(0)
-        Y = y1 if y1 != 0 else -y2
-        i0 = known.subs({u1: 0, u2: 0})
-        if Y == 0 or (spans and sp.simplify(y1 + y2) != 0):
-            # Either no dependence on its own drop at all (an
-            # independent current source), or a dependence that is not
-            # on the *difference* -- a dependent current source reading
-            # a voltage elsewhere. Both are current sources whose value
-            # happens to be an expression, not impedances.
-            if Y == 0 and sp.simplify(i0) == 0:
-                continue                  # an open branch: not in the graph
-            out.append(Branch(el.name, n1, n2, i_sym, Z=None,
-                              E=sp.Integer(0),
-                              source_current=sp.simplify(known)))
-            continue
-        out.append(Branch(el.name, n1, n2, i_sym,
-                          Z=sp.simplify(1 / Y), E=sp.simplify(-i0 / Y)))
-    return out
+#: The branch reader lives in its own module now (it is useful without
+#: any of this, and is proposed to version 9 on its own). The name stays
+#: for continuity: everything here raised and caught `ByHandError`.
+ByHandError = BranchError
 
 
 def _refuse_for(elements: List[Element], method: str) -> Optional[str]:
