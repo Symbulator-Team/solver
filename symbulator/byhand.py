@@ -1042,6 +1042,47 @@ def compare(bh: ByHand, classic: Dict[str, sp.Expr]) -> Comparison:
                       checks, solved)
 
 
+def lead(system: ByHand):
+    """Which method wrote the equations the reader is looking at.
+
+    Roberto, 8 Sep 2026: *"When only one method works, you are
+    mentioning the one that doesn't."* The line used to open with the
+    refusal -- *Nodal analysis is not offered for this circuit* -- and
+    left the reader to deduce that what they were reading was therefore
+    mesh. This sentence goes first and says so; `shorter_route`'s
+    sentence follows it.
+
+    Per *shown* method, not per circuit, so it follows the picker when
+    both methods apply. `None` for a system that was refused: nothing
+    was generated, and the refusal is the whole message."""
+    if not system.supported:
+        return None
+    return _m(M.N_BH_SHOWN_NODAL if system.method == "nodal"
+              else M.N_BH_SHOWN_MESH)
+
+
+def technique(system: ByHand):
+    """Whether this system actually needed a supernode or a supermesh,
+    and how many -- or `None`, which is the point.
+
+    Roberto, 8 Sep 2026, twice over: mention the technique in the line
+    when it is used, and *"remove the reference ... if it was not used
+    in that instance"*. A circuit with no voltage source between two
+    non-reference nodes has no supernode in it, and a card that says
+    *(with supernodes)* on every run has told the reader nothing."""
+    if not system.supported:
+        return None
+    kind = "supernode" if system.method == "nodal" else "supermesh"
+    n = sum(1 for r in system.rows if r.kind == kind)
+    if not n:
+        return None
+    if kind == "supernode":
+        return (_m(M.N_BH_ONE_SUPERNODE) if n == 1
+                else _m(M.N_BH_MANY_SUPERNODES, n=n))
+    return (_m(M.N_BH_ONE_SUPERMESH) if n == 1
+            else _m(M.N_BH_MANY_SUPERMESHES, n=n))
+
+
 def shorter_route(nodal_system: ByHand, mesh_system: ByHand):
     """Which of the two methods writes fewer equations for this circuit,
     as a coded message -- or that one of them is not offered at all.
