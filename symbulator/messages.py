@@ -169,6 +169,14 @@ E_BH_ONE_RELATION      = 734
 E_BH_LOOP_NOT_TRACED   = 735
 E_BH_LOOP_NOT_CLOSED   = 736
 
+# #332: the augmented method. An element whose current cannot be written
+# in the method's own unknowns keeps that current as an unknown of its
+# own and contributes its defining relation as an extra equation -- what
+# a textbook does for a transformer, a two-port or a coupled pair.
+N_BH_ELEMENT_EQ        = 737
+E_BH_MUTUAL_USE_MESH   = 739
+E_BH_PORT_USE_NODAL    = 740
+
 
 CATALOGUE = {
     # --- 2xx elements -------------------------------------------------
@@ -465,6 +473,22 @@ CATALOGUE = {
                            "a mesh could not be traced as a single "
                            "loop"),
     E_BH_LOOP_NOT_CLOSED: ("note", "a mesh did not close"),
+
+    N_BH_ELEMENT_EQ: ("note",
+                      "%{name}'s own defining relation, carried as an "
+                      "extra equation because its current is not one the "
+                      "method can write on its own"),
+    E_BH_PORT_USE_NODAL: ("note",
+                          "This circuit contains %{what}. Its windings "
+                          "are not branches a single mesh current flows "
+                          "round, so a mesh system would need their "
+                          "voltages as extra unknowns. Nodal analysis "
+                          "carries it directly -- try that instead."),
+    E_BH_MUTUAL_USE_MESH: ("note",
+                           "This circuit has mutually coupled coils. "
+                           "They are taught with mesh analysis, where a "
+                           "coupled coil's induced voltage is a term in "
+                           "the loop equation -- try mesh instead."),
 }
 
 

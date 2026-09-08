@@ -102,6 +102,28 @@ def stamped(elements: List[Element], domain: str, omega=None,
             setattr(circ, "_stamp_" + kind, record(method))
 
     circ.stamp_all()
+
+    # A two-port written with its parameters in brackets --
+    # `z,1,2,[1,2,3,4]` -- does not pass them to `Circuit`: they reach
+    # the solve as *conditions*, `z111 = 1` and the rest, which is the
+    # calculator's "the values are stored in the parameter variables".
+    # Nothing here runs the conditions machinery, so without this the
+    # stamped system carries the free symbols `z111 ...` while the
+    # classic solve carries 1, 2, 3, 4 -- and the two then disagree for
+    # a reason that has nothing to do with the method (#332).
+    from .elements import two_port_param_conditions
+    bindings = {}
+    for cond in two_port_param_conditions(elements):
+        name, _, text = cond.partition("=")
+        try:
+            bindings[sp.Symbol(name.strip())] = circ._value(text.strip())
+        except Exception:                    # noqa: BLE001
+            continue
+    if bindings:
+        circ.equations = [sp.Eq(eq.lhs.subs(bindings), eq.rhs.subs(bindings),
+                                evaluate=False) for eq in circ.equations]
+        circ.known = {k: (v.subs(bindings) if hasattr(v, "subs") else v)
+                      for k, v in circ.known.items()}
     return circ, origin
 
 

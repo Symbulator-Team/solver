@@ -37,7 +37,8 @@ from typing import Dict, List, Optional, Tuple
 import sympy as sp
 
 from . import messages as M
-from .elements import CircuitError, Element, TWO_PORT_KINDS
+from .elements import (CircuitError, Element, PORT_KINDS,
+                       TWO_PORT_KINDS)
 from .si_prefix import (expand_shorthand, expand_value, safe_sympify,
                         hijacked_names)
 
@@ -291,7 +292,16 @@ class Circuit:
         for e in self.elements:
             n1, n2 = getattr(e, "n1", None), getattr(e, "n2", None)
             key = f"v_{e.name}"
-            if e.kind in ("m", "o", "t") or n1 is None or n2 is None:
+            # Every multi-terminal kind, not just `t` (#332). A two-port
+            # has no single voltage drop to stand behind `v_<name>`, the
+            # same reason a transformer is excluded -- and `n1` on a
+            # four-terminal one is not a node at all but the bracketed
+            # pair `pr(1,0)`, so asking for its voltage invents a node.
+            # That is what it had been doing: `z,[1,0],[2,3],[...]`
+            # registered `pr(1,0)` and `pr(2,3)` as nodes, giving them
+            # unconstrained `v_` unknowns and a `0 = 0` KCL apiece.
+            if (e.kind in ("m", "o") or e.kind in PORT_KINDS
+                    or n1 is None or n2 is None):
                 continue
             if key in node_owned:
                 continue
