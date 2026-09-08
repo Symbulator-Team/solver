@@ -177,6 +177,17 @@ N_BH_ELEMENT_EQ        = 737
 E_BH_MUTUAL_USE_MESH   = 739
 E_BH_PORT_USE_NODAL    = 740
 
+# #335: the line above the equations, in up to three sentences -- which
+# method wrote them, how the two methods compare (718-722), and which
+# textbook technique the written system actually uses. The lead sentence
+# is per *shown* method, so it follows the picker; the comparison is not.
+N_BH_SHOWN_NODAL       = 741
+N_BH_SHOWN_MESH        = 742
+N_BH_ONE_SUPERNODE     = 743
+N_BH_MANY_SUPERNODES   = 744
+N_BH_ONE_SUPERMESH     = 745
+N_BH_MANY_SUPERMESHES  = 746
+
 
 CATALOGUE = {
     # --- 2xx elements -------------------------------------------------
@@ -406,16 +417,14 @@ CATALOGUE = {
                            "reports, so there was nothing to check it "
                            "against."),
     N_BH_MESH_SHORTER: ("note",
-                        "Mesh analysis writes %{mesh} equations for this "
-                        "circuit and nodal writes %{nodal}. Mesh is the "
-                        "shorter route here."),
+                        "Mesh is the shorter route here: mesh needs "
+                        "%{mesh}, nodal %{nodal}."),
     N_BH_NODAL_SHORTER: ("note",
-                         "Nodal analysis writes %{nodal} equations for this "
-                         "circuit and mesh writes %{mesh}. Nodal is the "
-                         "shorter route here."),
+                         "Nodal is the shorter route here: nodal needs "
+                         "%{nodal}, mesh %{mesh}."),
     N_BH_METHODS_EVEN: ("note",
-                        "Nodal and mesh each write %{n} equations for "
-                        "this circuit, so neither is shorter."),
+                        "Nodal and mesh each need %{n} here, so neither "
+                        "is shorter."),
     N_BH_NO_MESH_HERE: ("note",
                         "Mesh analysis is not offered for this circuit."),
     N_BH_NO_NODAL_HERE: ("note",
@@ -489,8 +498,23 @@ CATALOGUE = {
                            "They are taught with mesh analysis, where a "
                            "coupled coil's induced voltage is a term in "
                            "the loop equation -- try mesh instead."),
-}
 
+    N_BH_SHOWN_NODAL: ("note",
+                       "The equations below were generated using nodal "
+                       "analysis."),
+    N_BH_SHOWN_MESH: ("note",
+                      "The equations below were generated using mesh "
+                      "analysis."),
+    N_BH_ONE_SUPERNODE: ("note",
+                         "One of them is written at a supernode."),
+    N_BH_MANY_SUPERNODES: ("note",
+                           "%{n} of them are written at supernodes."),
+    N_BH_ONE_SUPERMESH: ("note",
+                         "One of them is written round a supermesh."),
+    N_BH_MANY_SUPERMESHES: ("note",
+                            "%{n} of them are written round "
+                            "supermeshes."),
+}
 
 def render(code: int, args: dict) -> str:
     """The catalogue's English for one message, slots filled in.

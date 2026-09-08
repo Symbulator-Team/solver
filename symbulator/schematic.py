@@ -138,6 +138,8 @@ BLOCK_LANE_H = ROW_H + 100  # a second block, below the first (#321):
 # harness's 2px tolerance and so invisible until the values gained
 # subscripts too and it grew to 2.1.
 OP_LANE_H = 78     # extra height per extra op-amp lane
+OP_UNDER_H = 52    # extra height for a non-inverting input routed under
+OP_INK_BANDS = 24  # staircase steps modelling the op-amp wedge's ink
 MARGIN = 58
 GAP = 4.0          # clear air between a symbol's ink and a label's
 
@@ -323,6 +325,15 @@ def _name_below(subscripted: bool = True) -> float:
     descender -- but the subscript sits SUB_DY lower and capitals still
     drop CAP_DESCENT."""
     return (SUB_DY if subscripted else 0.0) + CAP_DESCENT
+
+
+def _runs_width(runs: List[Tuple]) -> float:
+    """The rendered width `_Canvas.runs` would bound this label at.
+
+    The same 7.2px average advance, in one place, so a caller that has
+    to know where a label's edge falls -- #338's op-amp name, which is
+    set against a sloping edge -- cannot drift from what is drawn."""
+    return sum(len(r[0]) * (7.2 * SUB_SCALE if r[1] else 7.2) for r in runs)
 
 
 def _name_runs(name: str) -> List[Tuple[str, bool]]:
@@ -1739,6 +1750,29 @@ def _op_up(e: Element) -> str:
     return e.fields[1] if e.fields[1] != "0" else e.fields[0]
 
 
+def _op_under(lay: "_Layout", e: Element) -> bool:
+    """Whether this op-amp's downward input takes the route *under* the
+    body rather than over the node row (#337).
+
+    It does when that input's node sits to the **right** of the input
+    riser. The over-the-top route leaves the pin going left, climbs to
+    16px under the node row and then runs the whole width back to the
+    right -- straight across the riser it just left and across whatever
+    the node row carries in between. Roberto's reading of the picture,
+    8 Sep 2026: go down and right instead, and the crossings are gone.
+
+    Asked by the layout (which has to make the drawing taller for it)
+    and by the drawing itself, so it lives outside both."""
+    if lay.op_src.get(e.name) is not None:
+        return False
+    up = _op_up(e)
+    flip = up != e.fields[1]
+    dn = e.fields[1] if flip else e.fields[0]
+    if dn == "0" or dn not in lay.node_col or up not in lay.node_col:
+        return False
+    return lay.node_col[dn] > lay.node_col[up]
+
+
 class _Layout:
     """Column assignment and the resulting pixel geometry."""
 
@@ -2183,9 +2217,25 @@ class _Layout:
         return MARGIN + self.max_level * self.stack_h
 
     @property
+    def op_under(self) -> bool:
+        """Whether any op-amp here routes its lower input underneath."""
+        return any(_op_under(self, e) for e in self.opamps)
+
+    @property
     def y_bot(self) -> float:
+        # `op_under` is Roberto's "make the circuit taller": the band it
+        # adds is what the under-run travels in, clear of every body.
         return (self.y_top + ROW_H + self.max_op_lane * OP_LANE_H
-                + self.max_block_lane * BLOCK_LANE_H)
+                + self.max_block_lane * BLOCK_LANE_H
+                + (OP_UNDER_H if self.op_under else 0.0))
+
+    @property
+    def y_under(self) -> float:
+        """The lane an under-run travels in: half the added band above
+        the ground rail, which puts it clear of the deepest triangle
+        (46px above the rail before the band was added) and clear of
+        every stretched body, which stays centred higher up."""
+        return self.y_bot - OP_UNDER_H / 2.0
 
 
 # --- rendering ------------------------------------------------------
@@ -2232,7 +2282,15 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
            .format(tx, mid - h / 2, mid + h / 2, tx + w, mid),
            (tx, mid - h / 2), (tx + w, mid + h / 2))
     cv.obstacle(tx, mid - h / 2, tx + w, mid + h / 2)
-    cv.ink(tx, mid - h / 2, tx + w, mid + h / 2)
+    # The ink is the wedge, banded (#338). A band's width is the
+    # triangle's width at whichever of its two edges is nearer the
+    # middle -- the widest point the band covers -- so the staircase
+    # encloses the symbol rather than cutting into it.
+    band = h / OP_INK_BANDS
+    for k in range(OP_INK_BANDS):
+        ya, yb = mid - h / 2 + k * band, mid - h / 2 + (k + 1) * band
+        near = min(abs(ya - mid), abs(yb - mid))
+        cv.ink(tx, ya, tx + w * (1.0 - 2.0 * near / h), yb)
     # The pin signs are stroked marks, not text glyphs, so they match
     # the voltage source's polarity marks in weight and size (#130).
     _sign_mark(cv, tx + 13, y_minus, up_sign == "+")
@@ -2241,10 +2299,24 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # passes over the triangle's top, where the name normally sits, so
     # the name yields the spot and moves under the body instead.
     loop = x_out < tx + w + 12
-    cv.runs(tx + w / 2,
+    # #338, Roberto: the name closer to the symbol. Above a *triangle*
+    # the nearest ink is not the top vertex but the hypotenuse, which
+    # at the body's horizontal centre has already fallen h/4 -- so a
+    # name cleared from the top vertex reads as floating a quarter of
+    # the symbol's height away from anything. Clear it from the sloping
+    # edge instead, measured at the label's own left corner, which is
+    # the corner that comes closest to the slope.
+    nm = _name_runs(e.name)
+    x_name = tx + w / 2
+    edge_x = max(tx, x_name - _runs_width(nm) / 2.0)
+    # One band of slack, so the label clears the staircase the ink is
+    # recorded as and not merely the ideal slope underneath it.
+    y_slope = (mid - h / 2.0 + (edge_x - tx) / w * (h / 2.0)
+               - h / OP_INK_BANDS)
+    cv.runs(x_name,
             mid + h / 2 + GAP + LABEL_ASCENT if loop
-            else mid - h / 2 - GAP - _name_below(),
-            _name_runs(e.name))
+            else y_slope - GAP - _name_below(),
+            nm)
 
     # upper input: straight down from its node, then in
     cv.wire(x_in, lay.y_top, x_in, y_minus)
@@ -2285,7 +2357,45 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         grounded_at = None
         xp_node = lay.px(lay.node_col[dn_node])
         dn_col, up_col = lay.node_col[dn_node], lay.node_col.get(up_node)
-        if up_col is not None and dn_col == up_col - 1 \
+        if _op_under(lay, e):
+            # Down and right, under the body (#337). The node is to the
+            # right, so the old route back over the top crossed the
+            # input riser and the node row; this one crosses nothing
+            # the circuit did not already put in the way.
+            #
+            # Where it rises is the whole correctness question. Teeing
+            # onto the node's column low down would join whatever wire
+            # is there -- and if something hangs from that node to the
+            # rail, the wire down there is on the *ground* side of it.
+            # Node 3's column in Lesson 5a's Drill Exercise 3.2 carries
+            # r30, so a tee 26px above the rail is node 0, not node 3
+            # (Roberto caught exactly this). The riser goes all the way
+            # to the node row, on the node's own column when that
+            # column is clear and in the free gap beside it when not.
+            blocked = any(lay.elem_col.get(g.name) == dn_col
+                          for g in lay.grounded)
+            x_rise = xp_node - 30 if blocked else xp_node
+            cv.wire(x_p, y_plus, x_p, lay.y_under)
+            cv.wire(x_p, lay.y_under, x_rise, lay.y_under)
+            if blocked:
+                # Up beside the column and into the node from the left,
+                # 16px under the row -- the same clearance the route
+                # over the top uses, and the last 30px of it. Crossing
+                # the column itself to rise on its far side would cost
+                # a hop over the very wire whose lower half is the
+                # wrong node, and 66px of width for the privilege.
+                cv.wire(x_rise, lay.y_under, x_rise, lay.y_top + 16)
+                cv.wire(x_rise, lay.y_top + 16, xp_node, lay.y_top + 16)
+                # A tee, not a run up to the row: the column's own wire
+                # is already there, and 16px under the row is above any
+                # hanging body (the shortest lead a vertical element
+                # leaves is 55px), so this lands on the node's side of
+                # it. Running up to y_top instead would lay a second
+                # wire along the first.
+                cv.dot(xp_node, lay.y_top + 16)
+            else:
+                cv.wire(x_rise, lay.y_under, x_rise, lay.y_top)
+        elif up_col is not None and dn_col == up_col - 1 \
                 and lay.gap_free(dn_col):
             # The column to the left is the input's own node and the
             # row between them is empty: rise to the node row and join

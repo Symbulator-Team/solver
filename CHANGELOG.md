@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.6.2 -- 8 Sep 2026 (#335, #337, #338: the by-hand line, and two op-amp drawings)
+
+### Changed
+- **A by-hand run says which method wrote the equations (#335).**
+  `byhand.lead()` returns that sentence for the system in hand and
+  `byhand.technique()` returns whether it needed a supernode or a
+  supermesh, and how many -- or `None`, which is the point: a circuit
+  with no voltage source between two non-reference nodes has no
+  supernode in it, and saying otherwise describes the method rather
+  than the circuit. Six new codes, 741-746.
+- **The shorter-route sentences carry no noun the number must agree
+  with (718-720).** "Mesh analysis writes %{mesh} equations" read
+  "writes 1 equations" in 53 of the tutorial's 210 eligible circuits;
+  it now reads "mesh needs 1, nodal 3".
+- **An op-amp's non-inverting input is routed under the body when its
+  node lies to the right (#337).** It used to leave the pin going left,
+  climb to 16px under the node row and run the whole width back across
+  the riser it had just left. It now drops into a band of its own below
+  the body -- `OP_UNDER_H`, added to a drawing only when one is needed
+  -- and rises beside the node's column, teeing 16px under the row.
+  That height matters: a tee lower down would be on the *ground* side of
+  whatever hangs from that node to the rail, which is a different node
+  and a picture of a different circuit. Measured over the nine circuits
+  it applies to, the tee clears the hanging body by 62px.
+- **The op-amp's name is set against its own sloping edge (#338).**
+  Above a triangle the nearest ink is the hypotenuse, not the top
+  vertex, so a name cleared from the vertex floats a quarter of the
+  symbol's height from anything.
+
+### Fixed
+- **An op-amp recorded its bounding box as ink, not its wedge (#338).**
+  `tools/review_schematics.py` reads exactly those rectangles, so a
+  label in the empty notch above the hypotenuse counted as sitting on
+  the symbol -- 58 findings the moment the name moved, every one the
+  model's fault. The wedge is now a staircase of bands that encloses
+  the triangle and never cuts into it. The keep-out for *wires* is
+  still the full box.
+
+## 0.6.1 -- 8 Sep 2026 (#332: the augmented method)
+
+### Added
+- **Every circuit in the tutorial now has a by-hand system.** A current
+  that cannot be written in the method's own unknowns is carried as an
+  extra unknown, and its element's own relation stands as an extra
+  equation -- one equation for one unknown, so the system stays square.
+  Coupled coils go to mesh, which is the form the engine already writes
+  a coupled inductor's drop in and the reason textbooks teach coupled
+  coils in the mesh chapter; transformers and two-port blocks go to
+  nodal, carrying their terminal currents and defining relations.
+  Op-amps in mesh stay refused, correctly. Circuits with no method at
+  all: 16 before, none after. Three codes, 737, 739 and 740.
+
+### Fixed
+- **A four-terminal two-port registered its bracketed pair as a node.**
+  `stamp_all`'s reference closure excluded `t` but not the other port
+  kinds, so `pr(1,0)` became a node with an unconstrained `v_` unknown
+  and a `0 = 0` KCL. Harmless to the classic solve, which is why it had
+  gone unnoticed since #314, and fatal to anything that counts
+  equations.
+- **A two-port's bracketed parameters reach a read-back branch.** They
+  arrive as conditions rather than through `Circuit(params=...)`, so
+  `branches.stamped` applies those bindings itself; without them a
+  by-hand system carried free `z111` symbols while the classic solve
+  carried the numbers.
+
+## 0.6.0 -- 8 Sep 2026 (#329: by-hand nodal and mesh systems)
+
+### Added
+- **`byhand.py`: a second system for the same circuit, written the way
+  a first course teaches it.** KCL in node voltages with supernodes, or
+  KVL in mesh currents with supermeshes; solved separately and always
+  compared with the classic solve, which stays the authority. It states
+  no component rule of its own -- it runs the real `Circuit.stamp_all()`
+  and reads each branch's v-i relation back out of the equations the
+  engine produced, by differentiation, through the new `branches.py`, so
+  a domain rule added to `engine.py` appears there for free and the two
+  cannot drift.
+- **`schematic.to_svg(desc, marks=...)`**, an opt-in overlay: the nodes
+  whose KCL is written, dashed enclosures round each supernode and
+  supermesh, and the mesh currents curling round their own loops.
+- **The 7xx message range**, so every sentence the feature produces is
+  a code the application renders (#199).
+
 ## 0.5.33 -- 7 Sep 2026 (#323: an island behind a coupling)
 
 ### Changed
