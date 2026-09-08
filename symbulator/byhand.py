@@ -101,11 +101,28 @@ class ByHand:
     #: Meshes as ordered branch walks, for the drawing (mesh only):
     #: {"I1": [(element_name, +1|-1), ...]}.
     loops: Dict[str, List[Tuple[str, int]]] = field(default_factory=dict)
+    #: The nodes whose KCL is written (nodal only), for the drawing.
+    marked_nodes: List[str] = field(default_factory=list)
+    #: Node sets enclosed together (nodal only), one per supernode.
+    supernodes: List[List[str]] = field(default_factory=list)
+    #: Mesh names merged into one equation (mesh only), one per
+    #: supermesh.
+    supermeshes: List[List[str]] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
     @property
     def equations(self) -> List[sp.Eq]:
         return [r.eq for r in self.rows]
+
+    @property
+    def marks(self) -> Dict[str, object]:
+        """What the schematic should draw over the circuit for this
+        run: `schematic.to_svg(desc, marks=system.marks)`. One shape for
+        both methods, so the caller does not branch on which it has."""
+        return {"nodes": list(self.marked_nodes),
+                "supernodes": [list(g) for g in self.supernodes],
+                "loops": dict(self.loops),
+                "supermeshes": [list(g) for g in self.supermeshes]}
 
 
 #: The branch reader lives in its own module now (it is useful without
@@ -313,6 +330,12 @@ def nodal(elements: List[Element], domain: str, omega=None,
             label = ("KCL around the supernode enclosing nodes "
                      + ", ".join(live))
             kind = "supernode"
+            # The whole group is enclosed, including any node whose own
+            # KCL was dropped for an op-amp: the enclosure is a picture
+            # of which nodes the one equation covers, not of which of
+            # them contributed a term.
+            out.supernodes.append(sorted(nodes))
+        out.marked_nodes.extend(live)
         out.rows.append(Row(kind, label, sp.Eq(total, 0, evaluate=False)))
 
     out.rows.extend(opamp_rows)
@@ -647,6 +670,27 @@ def mesh(elements: List[Element], domain: str, omega=None,
     # controlled source's value has to be rewritten in before any of it
     # can be written down.
     i_map = {branches[k].i: in_branch[k] for k in in_branch}
+
+    # A branch that lies on no mesh at all -- the single element hanging
+    # off a node nothing else touches, which is what an open port looks
+    # like -- carries no current. Saying so is part of the method, and
+    # not saying it left a dependent source that reads such a branch
+    # (`e,3,0,1.5*is1` over a dangling `s1`) holding a free symbol that
+    # nothing in the system ever bound. The classic solve answers 0 for
+    # those, and so must this.
+    stray = [k for k in range(len(branches)) if k not in in_branch]
+    for k in stray:
+        if branches[k].is_current_source:
+            # A current source driving an open circuit. The mesh system
+            # has no current to give it, and a contradiction dressed as
+            # an equation is worse than a sentence.
+            return ByHand(
+                method="mesh", domain=domain, supported=False,
+                reason=("The current source " + branches[k].name + " sits on "
+                        "a branch that no mesh passes through, so there is "
+                        "no mesh current for it to set. Nodal analysis "
+                        "handles this circuit."))
+        i_map[branches[k].i] = sp.Integer(0)
     # ...and every node voltage likewise. Mesh analysis has no node
     # voltages of its own, but it can still reach one the way a student
     # does: walk from the reference to that node and add up the drops
@@ -752,6 +796,7 @@ def mesh(elements: List[Element], domain: str, omega=None,
                      + " and ".join(names)
                      + " -- the shared current source's drop cancels")
             kind = "supermesh"
+            out.supermeshes.append(list(names))
         for name in left:
             # A drop that would not eliminate: kept as an honest extra
             # unknown rather than a quietly wrong system. Added once
@@ -781,6 +826,12 @@ def mesh(elements: List[Element], domain: str, omega=None,
             out.bridge.append(Row(
                 "bridge", "the current through " + br.name,
                 sp.Eq(br.i, sp.expand(in_branch[k]), evaluate=False)))
+        else:
+            out.bridge.append(Row(
+                "bridge",
+                "the current through " + br.name + " -- no mesh runs "
+                "through it, so none flows",
+                sp.Eq(br.i, sp.Integer(0), evaluate=False)))
 
     # The same guard over the finished system: a constraint can strand
     # a node voltage where no KVL did.

@@ -91,6 +91,44 @@ def test_a_boundary_current_source_drops_its_mesh_equation():
     assert any(row.kind == "mesh-constraint" for row in system.rows)
 
 
+def test_a_branch_on_no_mesh_carries_no_current():
+    """An element hanging off a node nothing else touches -- what an
+    open port looks like -- lies on no loop, so no current flows in it.
+
+    Saying so is part of the method. Not saying it left a dependent
+    source that *reads* such a branch holding a symbol nothing in the
+    system ever bound, and the by-hand answers then disagreed with the
+    classic solve. Found by sweeping every circuit in the example book
+    rather than only the entries a by-hand run is offered for -- both
+    circuits that showed it are `er`/`port` entries, which the ordinary
+    sweep never reaches."""
+    desc = "e,3,0,1.5*i_s1\nr3,3,2,3\nr2,2,0,2\ns1,2,1"
+    system, verdict = _run(desc, "mesh")
+    assert system.supported, system.reason
+    assert verdict.verdict == "agrees", verdict.message
+    written = {str(r.eq.lhs): r.eq.rhs for r in system.bridge}
+    assert written["i_s1"] == 0
+    # ...and nothing in the system is left in terms of that current.
+    for row in system.rows:
+        assert sp.Symbol("i_s1") not in (row.eq.lhs - row.eq.rhs).free_symbols
+
+
+def test_a_current_source_on_no_mesh_is_refused_not_guessed():
+    """A current source feeding a branch that goes nowhere has no mesh
+    current to set. A sentence beats a contradiction dressed as an
+    equation.
+
+    The circuit has to stay *connected* to reach this: a source into a
+    genuinely floating piece is refused by the parser first, so the
+    dangling end here hangs off the source rather than the source
+    hanging off nothing."""
+    desc = "e1,1,0,10\nr1,1,0,5\nj1,1,2,2\nr2,2,3,3"
+    system = byhand.mesh(parse_circuit(desc), "dc")
+    assert not system.supported
+    assert "no mesh passes through" in system.reason
+    assert not system.rows
+
+
 def test_mesh_unknowns_are_named_for_the_drawing():
     system, _ = _run(BRIDGE, "mesh")
     assert [str(u) for u in system.unknowns] == ["I1", "I2", "I3"]

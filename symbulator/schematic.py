@@ -2358,7 +2358,7 @@ def _ground_symbol(cv: _Canvas, x: float, y: float) -> None:
     cv.text(x, y + 20 + LABEL_ASCENT + GAP, "0")
 
 
-def _render(elements: List[Element], loops=None) -> str:
+def _render(elements: List[Element], marks=None) -> str:
     lay = _Layout(elements)
     cv = _Canvas()
     y_top, y_bot = lay.y_top, lay.y_bot
@@ -2659,10 +2659,10 @@ def _render(elements: List[Element], loops=None) -> str:
         for i, line in enumerate(captions):
             cv.runs(cx, cy + i * 17, line, "start")
 
-    # 7b. X14 (version X only): the mesh currents, when a caller asked
-    #     for them. Before the flush so the arrows are ordinary parts.
-    if loops:
-        _mesh_marks(cv, segs, loops)
+    # 7b. X14 (version X only): the by-hand overlay, when a caller
+    #     asked for one. Before the flush so it is ordinary parts.
+    if marks:
+        _byhand_marks(cv, lay, segs, y_top, marks)
 
     # 8. emit the collected wires -- merged, with junction dots at every
     #    T-joint and a semicircular hop wherever two wires cross without
@@ -2680,42 +2680,126 @@ def _render(elements: List[Element], loops=None) -> str:
         '<style>.symbulator-schematic .lbl{{font:13px/1 ui-sans-serif,'
         'system-ui,sans-serif;fill:currentColor;stroke:none}}'
         '.symbulator-schematic .sub{{font-size:{5:g}em}}'
-        '.symbulator-schematic .mesh{{opacity:.5}}'
-        '.symbulator-schematic .mesh-head{{fill:currentColor;stroke:none;'
-        'opacity:.5}}'
+        '.symbulator-schematic .mesh{{stroke:var(--accent,currentColor);'
+        'opacity:.75}}'
+        '.symbulator-schematic .mesh-head{{fill:var(--accent,currentColor);'
+        'stroke:none;opacity:.75}}'
+        '.symbulator-schematic .bh-node{{stroke:var(--accent,currentColor);'
+        'fill:none;opacity:.85}}'
+        '.symbulator-schematic .bh-encl{{stroke:var(--accent,currentColor);'
+        'fill:none;opacity:.8;stroke-dasharray:5 4}}'
         '.symbulator-schematic .mesh-lbl{{font:12px/1 ui-sans-serif,'
-        'system-ui,sans-serif;fill:currentColor;stroke:none;opacity:.75}}</style>'
+        'system-ui,sans-serif;fill:var(--accent,currentColor);stroke:none;'
+        'opacity:.9}}'
+        '.symbulator-schematic .bh-cap{{font:11px/1 ui-sans-serif,'
+        'system-ui,sans-serif;fill:var(--accent,currentColor);stroke:none;'
+        'opacity:.9;letter-spacing:.04em}}</style>'
         '{4}</svg>'
     ).format(x0, y0, w, h, "".join(cv.parts), SUB_SCALE)
 
 
-def _mesh_marks(cv: _Canvas, segs: Dict[str, Tuple[float, float, float, float]],
-                loops) -> None:
-    """X14: a circulating arrow inside each mesh, labelled I1, I2, I3...
+def _rounded(x0: float, y0: float, x1: float, y1: float,
+             r: float = 12.0, cls: str = "bh-encl") -> str:
+    """A rounded rectangle as a path -- the dashed enclosure a textbook
+    draws round a supernode or a supermesh."""
+    r = min(r, (x1 - x0) / 2.0, (y1 - y0) / 2.0)
+    return (
+        '<path class="{6}" d="M{0:g} {1:g} H{2:g} A{4:g} {4:g} 0 0 1 {3:g} '
+        '{5:g} V{7:g} A{4:g} {4:g} 0 0 1 {2:g} {8:g} H{0:g} '
+        'A{4:g} {4:g} 0 0 1 {9:g} {7:g} V{5:g} A{4:g} {4:g} 0 0 1 {0:g} '
+        '{1:g} Z"/>'
+    ).format(x0 + r, y0, x1 - r, x1, r, y0 + r, cls, y1 - r, y1, x0)
 
-    `loops` is `byhand.ByHand.loops` -- {name: [(element, +1|-1), ...]}
-    in traversal order, +1 meaning the loop runs that element from its
-    own n1 to n2. `segs` holds each element's drawn segment with the n1
-    end first, so the walk can be laid over the picture directly.
 
-    The arrow turns the way the loop actually runs. Which way that is on
-    screen is not a property of the equations but of the drawing, so it
-    is read off the drawing: the shoelace sum over the midpoints in
-    traversal order, whose sign gives the direction of circulation --
-    positive is clockwise here, because SVG's y axis points down and
-    flips the usual convention.
+def _byhand_marks(cv: _Canvas, lay: "_Layout",
+                  segs: Dict[str, Tuple[float, float, float, float]],
+                  y_top: float, marks) -> None:
+    """X14: the by-hand overlay -- what a student would draw on the
+    circuit before writing the equations.
 
-    Drawn only when a caller asks for it. Nothing else in the module
-    changes, so every existing drawing, and both schematic harnesses,
-    see exactly what they saw before."""
-    for name, walk in loops.items():
+    `marks` is what `byhand.nodal()` / `byhand.mesh()` hand back:
+
+        nodes        the nodes whose KCL is written, ringed
+        supernodes   [[node, node, ...], ...] enclosed together
+        loops        {"I1": [(element, +1|-1), ...]} in traversal order
+        supermeshes  [["I1", "I2"], ...] enclosed together
+
+    Everything here is opt-in and additive: with no `marks` the drawing
+    is byte for byte the one this module has always produced, so both
+    schematic harnesses see exactly what they saw before.
+
+    Drawn in `var(--accent, currentColor)` so the overlay reads as one
+    layer distinct from the circuit, follows whichever of the app's
+    themes is on, and still renders standalone where that variable does
+    not exist."""
+    marks = marks or {}
+    node_x = {}
+    for n, col in lay.node_col.items():
+        node_x[n] = lay.px(col)
+
+    # --- the nodes whose equation is being written ----------------------
+    for n in marks.get("nodes") or ():
+        if n not in node_x:
+            continue
+        cv.raw('<circle class="bh-node" cx="{0:g}" cy="{1:g}" r="7"/>'
+               .format(node_x[n], y_top),
+               (node_x[n] - 9, y_top - 9), (node_x[n] + 9, y_top + 9))
+
+    # --- supernodes -----------------------------------------------------
+    #
+    # A supernode encloses two or more nodes *and* the source between
+    # them. The source is a spanning element drawn above the row, so the
+    # enclosure has to reach up to it -- which is why the box is grown
+    # over every element whose both ends are inside the group, not just
+    # over the node points.
+    #
+    # One case must not be drawn as a box: a group whose two nodes have
+    # some *other* node between them on the row. A box there silently
+    # swallows a node that is not in the supernode, which is worse than
+    # not drawing one. Those get a ring each and a dashed tie instead.
+    for group in marks.get("supernodes") or ():
+        inside = [n for n in group if n in node_x]
+        if len(inside) < 2:
+            continue
+        xs = [node_x[n] for n in inside]
+        lo, hi = min(xs), max(xs)
+        strays = [n for n, x in node_x.items()
+                  if n not in group and lo < x < hi]
+        if strays:
+            for n in inside:
+                cv.raw('<circle class="bh-encl" cx="{0:g}" cy="{1:g}" '
+                       'r="13"/>'.format(node_x[n], y_top),
+                       (node_x[n] - 15, y_top - 15),
+                       (node_x[n] + 15, y_top + 15))
+            cv.raw('<path class="bh-encl" d="M{0:g} {1:g} H{2:g}"/>'
+                   .format(lo + 13, y_top, hi - 13),
+                   (lo, y_top - 2), (hi, y_top + 2))
+            cap_x, cap_y = lo, y_top - 20
+        else:
+            y0, y1 = y_top - 16, y_top + 16
+            by_name = {el.name: el for el in lay.elements}
+            for name, seg in segs.items():
+                el = by_name.get(name)
+                if el is None:
+                    continue
+                ends = [t for t in _terminals(el) if t != "0"]
+                if ends and all(t in group for t in ends):
+                    y0 = min(y0, seg[1] - 20, seg[3] - 20)
+                    y1 = max(y1, seg[1] + 20, seg[3] + 20)
+            cv.raw(_rounded(lo - 20, y0, hi + 20, y1),
+                   (lo - 22, y0 - 2), (hi + 22, y1 + 2))
+            cap_x, cap_y = lo - 20, y0 - 5
+        cv.runs(cap_x, cap_y, [("supernode", False)], "start", cls="bh-cap")
+
+    # --- the mesh currents ---------------------------------------------
+    centres = {}
+    for name, walk in (marks.get("loops") or {}).items():
         points = []
-        for element, sign in walk:
+        for element, _sign in walk:
             seg = segs.get(element)
             if seg is None:
                 continue
-            x1, y1, x2, y2 = seg
-            points.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0))
+            points.append(((seg[0] + seg[2]) / 2.0, (seg[1] + seg[3]) / 2.0))
         if len(points) < 2:
             continue
         cx = sum(p[0] for p in points) / len(points)
@@ -2740,6 +2824,7 @@ def _mesh_marks(cv: _Canvas, segs: Dict[str, Tuple[float, float, float, float]],
         # for the drawing's own labels (#212); the same rule applies to
         # these.
         half_w, half_h = 11.0, 9.0
+
         def clear(px, py):
             for ix0, iy0, ix1, iy1 in cv.inks:
                 if (ix0 - half_w <= px <= ix1 + half_w
@@ -2762,6 +2847,8 @@ def _mesh_marks(cv: _Canvas, segs: Dict[str, Tuple[float, float, float, float]],
             if best:
                 cx, cy = best
                 r = max(12.0, min(r, 20.0))
+
+        centres[name] = (cx, cy, r, points)
 
         span = 1.5 * math.pi                 # 270 degrees: a clear circulation
         t0 = -0.35 * math.pi
@@ -2786,19 +2873,45 @@ def _mesh_marks(cv: _Canvas, segs: Dict[str, Tuple[float, float, float, float]],
         cv.raw(arc + head, (cx - r - 8, cy - r - 8), (cx + r + 8, cy + r + 8))
         cv.runs(cx, cy + 4.5, _name_runs(name), "middle", cls="mesh-lbl")
 
+    # --- supermeshes ----------------------------------------------------
+    #
+    # The two loops a shared current source merged into one equation,
+    # enclosed together. Drawn over the *elements* of both loops rather
+    # than over their two arrows, since that is the region the one KVL
+    # is written around.
+    for group in marks.get("supermeshes") or ():
+        pts = []
+        for name in group:
+            if name in centres:
+                cx, cy, r, points = centres[name]
+                pts.extend(points)
+                pts.append((cx - r, cy - r))
+                pts.append((cx + r, cy + r))
+        if len(pts) < 3:
+            continue
+        x0 = min(p[0] for p in pts) - 16
+        x1 = max(p[0] for p in pts) + 16
+        y0 = min(p[1] for p in pts) - 16
+        y1 = max(p[1] for p in pts) + 16
+        cv.raw(_rounded(x0, y0, x1, y1),
+               (x0 - 2, y0 - 2), (x1 + 2, y1 + 2))
+        cv.runs(x0, y0 - 5, [("supermesh", False)], "start", cls="bh-cap")
 
-def to_svg(desc: str, loops=None) -> str:
+
+def to_svg(desc: str, marks=None) -> str:
     """Render a Symbulator circuit description as a standalone SVG
     string.
 
-    `loops` (X14, version X only) draws a labelled circulating arrow in
-    each mesh -- pass `byhand.mesh(...).loops`. Omitted, the drawing is
-    byte for byte the one this function has always produced.
+    `marks` (X14, version X only) overlays what a by-hand run would
+    draw on the circuit -- ringed nodes, dashed supernode and supermesh
+    enclosures, and a circulating arrow per mesh. Pass
+    `byhand.nodal(...).marks` or `byhand.mesh(...).marks`. Omitted, the
+    drawing is byte for byte the one this function has always produced.
 
     >>> "svg" in to_svg("e1,1,0,5:r1,1,2,1'k:r2,2,0,1'k")
     True
     """
-    return _render(parse_circuit(desc, expand_si=False), loops=loops)
+    return _render(parse_circuit(desc, expand_si=False), marks=marks)
 
 
 def draw(desc: str):
