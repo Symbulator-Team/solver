@@ -1,4 +1,16 @@
-"""By-hand circuit analysis (X14) -- Symbulator X only, experimental.
+"""By-hand circuit analysis (X14-X16, promoted to version 9 as #329).
+
+Tried in version X first and made version 9's once the sweep over the
+example books came back clean: every system built agreed with the
+classic solve, and none differed. `repos/server/tools/check_byhand.py`
+is that sweep, and it is the thing to re-run -- deliberately not
+quoted here as a pair of counts, because the counts move whenever an
+example book gains an entry or a refusal becomes support -- they went
+up by ten nodal and six mesh in the day after #329's own sweep -- and
+a number restated in a second place is a number that goes quietly
+stale.
+
+The app still labels the card *Experimental*; the module is not.
 
 The classic Symbulator solve is untouched by everything in this module.
 It has 27 years of history behind it and it stays the authority: what is
@@ -43,15 +55,35 @@ directly in `Circuit.known` -- so those are read the same way from the
 admittance side instead. Add a domain rule to the engine and it appears
 here for free; change one and it changes here too.
 
-What is refused, and why
-------------------------
-Transformers, two-port parameter blocks and mutual inductance are not
-offered by either method: a first course does not teach nodal or mesh
-analysis on them, and the coupled multi-terminal constraints they stamp
-are not a branch v-i relation at all. Mesh additionally refuses op-amps,
-whose output current is supplied by the op-amp rather than flowing round
-a mesh. Every refusal is a plain sentence for the reader, never an
-exception into the page.
+The elements that are not a branch, and which method takes them
+---------------------------------------------------------------
+A transformer, a two-port parameter block and a magnetically coupled
+pair stamp constraints that couple more than one branch and are not a
+branch v-i relation at all, so neither method can substitute their
+currents away. Since #332 they are not refused outright: they are
+carried the augmented way, the current that cannot be written in the
+method's own unknowns becoming an extra unknown and the element's own
+relation an extra equation -- one for one, so the system stays square.
+Which method takes which is not arbitrary, and it is the split every
+textbook makes:
+
+    coupled coils            -> mesh   (the engine already writes the
+                                        drop as a function of currents,
+                                        which is what a KVL wants; a
+                                        coupled pair cannot be inverted
+                                        one coil at a time, so nodal
+                                        refuses and says to use mesh)
+    transformers, two-ports  -> nodal  (terminal currents as the extra
+                                        unknowns, defining relations as
+                                        the extra rows; mesh refuses,
+                                        a winding not being a branch one
+                                        mesh current runs round)
+
+Mesh additionally refuses op-amps, whose output current is supplied by
+the op-amp rather than flowing round a mesh, and a source controlled by
+a node voltage where that voltage cannot be recovered by walking from
+the reference. Every refusal is a plain sentence for the reader, never
+an exception into the page.
 """
 
 from __future__ import annotations
