@@ -57,7 +57,7 @@ def load_ipython_extension(ipython):
 
 #: The single source of truth for the version: pyproject.toml reads this
 #: attribute at build time, so the two cannot disagree.
-__version__ = "0.6.2"
+__version__ = "0.6.3"
 
 __all__ = ["dc", "ac", "fd", "tr", "t2s", "s2t", "t", "s", "pr", "pf", "gain", "th", "er", "port", "ex",
            "polar", "Phasor", "Result", "TheveninResult", "PortResult", "load_ipython_extension",

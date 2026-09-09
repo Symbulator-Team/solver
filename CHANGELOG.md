@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.3 -- 9 Sep 2026 (#344: an island's reference is zero everywhere, including in the answers derived from it)
+
+### Fixed
+- **A derived answer could name an island's reference node instead of
+  the zero it is (#344).** On
+  `e1,1,0,10:r1,1,2,4:t,[2,0],[3,4],[1,2]:r2,3,4,8` the same result
+  reported `v_4 = 0` and, two lines later, `v_r2 = 20/3 - v_4` and
+  `p_r2 = 50/9 - 5*v_4/6`. The third level (`v_<name>`, `p_<name>`,
+  `s_<name>`, `r_<name>`, `z_<name>`) reads node voltages out of the
+  solved dict, and an island's reference is never an unknown --
+  `Circuit.v()` hands back the literal 0 -- so it was not in that dict
+  until the reference loop put it there, which happened *after*. The
+  loop now runs first. Confined to `dc` and `ac`, the only domains that
+  compute a third level; `th()`, `er()` and `port()` were unaffected.
+
+  A regression from 0.5.32/0.5.33 rather than an old bug: before those,
+  every island was refused outright, so the set of references was always
+  just `{"0"}` and the ground-only special case was complete. The
+  answers were right as expressions and unreduced as answers -- the
+  expression above *is* 50/9 at `v_4 = 0`.
+
+### Changed
+- **`byhand`'s module documentation.** It still opened "Symbulator X
+  only, experimental", which 0.6.0 ended, and still listed
+  transformers, two-port blocks and mutual inductance as refused by
+  both methods, which 0.6.1's augmented method ended. It now records
+  which method takes which, and quotes no sweep counts: those move
+  whenever an example book gains an entry or a refusal becomes support,
+  and `tools/check_byhand.py` is the thing to re-run.
+
 ## 0.6.2 -- 8 Sep 2026 (#335, #337, #338: the by-hand line, and two op-amp drawings)
 
 ### Changed
