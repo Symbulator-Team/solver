@@ -332,14 +332,22 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
                                   equations=equations, unknowns=unknowns,
                                   conditions=conditions, suffix=suffix,
                                   references=references)
-    if domain in ("dc", "ac"):
-        # Matches the original: the power/impedance third-level derived
-        # quantities are only computed for dc/ac, not for fd (s-domain).
-        for solution in solutions:
-            solution.update(_derived(elements, domain, solution, use_rms=use_rms))
     # An island behind a port was given a reference of its own (#322):
     # its voltage is 0 by construction and is reported as an answer, so
     # the list of node voltages is complete, and the reader is told.
+    #
+    # This has to happen *before* the third level (#344). `_derived`
+    # reads node voltages straight out of the solution dict, and a
+    # reference is never an unknown -- `Circuit.v()` hands back the
+    # literal 0 for it -- so it is not in that dict until this loop puts
+    # it there. Run the other way round and `_node_v` fell through to
+    # its own last-resort branch and invented a free symbol, which is
+    # how a circuit with a coupled secondary came to report
+    # `v_r10 = -v_4` three lines under `v_4 = 0`. Every such answer was
+    # right as an expression and unreduced as an answer; two of the 202
+    # dc/ac entries in the example books showed it, and both were
+    # reader-visible. `_node_v`'s fallback goes back to meaning what its
+    # docstring says it means: a node that was never stamped at all.
     from .elements import local_references
     from . import messages as M
     refs = local_references(elements, preferred=references)
@@ -351,6 +359,11 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
         notes.append({"code": M.N_LOCAL_REFERENCE, "args": args,
                       "severity": M.severity(M.N_LOCAL_REFERENCE),
                       "text": M.render(M.N_LOCAL_REFERENCE, args)})
+    if domain in ("dc", "ac"):
+        # Matches the original: the power/impedance third-level derived
+        # quantities are only computed for dc/ac, not for fd (s-domain).
+        for solution in solutions:
+            solution.update(_derived(elements, domain, solution, use_rms=use_rms))
     return Result(domain=domain, values=solutions[0], solutions=solutions,
                   notes=notes, references=refs)
 

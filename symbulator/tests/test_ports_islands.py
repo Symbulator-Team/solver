@@ -8,7 +8,7 @@ forms; none of them has a grounded port."""
 import sympy as sp
 import pytest
 
-from symbulator import dc, port, th, er, tr, s, t
+from symbulator import ac, dc, port, th, er, tr, s, t
 from symbulator import messages as M
 from symbulator.elements import CircuitError, local_references, parse_circuit
 from symbulator.equiv import _port_pair
@@ -99,6 +99,49 @@ def test_island_behind_a_block_gets_the_ports_bottom_as_reference():
     assert n["code"] == M.N_LOCAL_REFERENCE and n["severity"] == "warning"
     assert n["args"] == {"nodes": "m, q, n", "ref": "m"}
     assert "measured against m" in n["text"]
+
+
+def _names_a_reference(res):
+    """Answers still carrying one of this result's own reference nodes
+    as a free symbol. Should always be empty: a reference is 0."""
+    refs = {"v_" + n for n in res.references}
+    return sorted(name for name, value in res.values.items()
+                  if {str(sym) for sym in getattr(value, "free_symbols", ())} & refs)
+
+
+def test_a_derived_answer_never_names_the_islands_reference():
+    # #344. The third level (v_<name>, p_<name>, r_<name>) reads node
+    # voltages back out of the solved dict, and a reference is never an
+    # unknown -- `Circuit.v()` hands back the literal 0 -- so it has to
+    # be put in that dict *before* that round. It was being put there
+    # after, and a branch with a terminal on the reference came back as
+    # `v_r10 = -v_4` three lines under `v_4 = 0`: correct as an
+    # expression, unreduced as an answer.
+    #
+    # The load here sits across the transformer's floating secondary and
+    # carries a real current, so the power answer would have carried the
+    # symbol too -- the earlier tests all happened to sit on branches
+    # with zero current, where the multiplication hid it.
+    res = dc("e1,1,0,10:r1,1,2,4:t,[2,0],[3,4],[1,2]:r2,3,4,8")
+    assert res.references == {"4": ["3"]} and res["v_4"] == 0
+    assert res["i_r2"] == sp.Rational(5, 6)
+    assert res["v_r2"] == sp.Rational(20, 3)
+    assert res["p_r2"] == sp.Rational(50, 9)
+    assert _names_a_reference(res) == []
+
+
+def test_no_answer_names_a_reference_behind_a_coupling():
+    # #344 on #323's shape: Nilsson & Riedel's 60 V problem, which is
+    # Lesson 10's and was serving `v_l2 = -v_4` to readers.
+    res = dc("e,1,0,60:r9,1,a,9:r3,a,2,3:l1,2,0,2:"
+             "l2,3,4,8:r2,3,5,2:r10,5,4,10:m,l1,l2,2")
+    assert res.references == {"4": ["3", "5"]}
+    assert res["v_l2"] == 0 and res["v_r10"] == 0
+    assert _names_a_reference(res) == []
+    # and in ac, the other domain that computes a third level
+    ac_res = ac("e,1,0,10:r9,1,a,9:l1,a,0,2:l2,3,4,8:r10,3,4,10:m,l1,l2,2",
+                omega=2)
+    assert ac_res.references and _names_a_reference(ac_res) == []
 
 
 def test_notes_and_references_survive_at_rounded_and_tr():
