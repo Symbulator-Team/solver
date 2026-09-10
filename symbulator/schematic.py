@@ -138,6 +138,8 @@ BLOCK_LANE_H = ROW_H + 100  # a second block, below the first (#321):
 # harness's 2px tolerance and so invisible until the values gained
 # subscripts too and it grew to 2.1.
 OP_LANE_H = 78     # extra height per extra op-amp lane
+OP_ABOVE_GAP = 60  # clear strip between an above-row body and the row
+OP_ABOVE_H = 126    # the band an above-row op-amp adds over the row
 OP_UNDER_H = 52    # extra height for a non-inverting input routed under
 OP_INK_BANDS = 24  # staircase steps modelling the op-amp wedge's ink
 MARGIN = 58
@@ -506,6 +508,9 @@ def _flat(runs: List[Tuple]) -> str:
 
 
 HOP_R = 5.0    # radius of the semicircular hop where one wire crosses another
+# The opening of a hop's arc, as `_hop_path` writes it. Counting these
+# is how a drawing's crossings are counted (`_cost`).
+_HOP_ARC = "A{0:g} {0:g} 0 0".format(HOP_R)
 _EPS = 0.5
 
 
@@ -1867,7 +1872,15 @@ def _op_under(lay: "_Layout", e: Element) -> bool:
 class _Layout:
     """Column assignment and the resulting pixel geometry."""
 
-    def __init__(self, elements: List[Element]) -> None:
+    def __init__(self, elements: List[Element],
+                 allow_raise: Optional[set] = None,
+                 allow_above: Optional[set] = None) -> None:
+        # Which op-amps this pass may draw on the node row, and which
+        # above it. `None` means every candidate; `_render` calls the
+        # layout once per combination and keeps the cheapest drawing
+        # (see `_cost`).
+        self.allow_raise = allow_raise
+        self.allow_above = allow_above
         # Which sources are controlled -- computed once, from the whole
         # circuit, because the answer for one source depends on what
         # names the *others* introduced (see `_controlled`).
@@ -2116,6 +2129,24 @@ class _Layout:
         # proportion Roberto's reference has.
         idx_of = {n: k for k, n in enumerate(order)}
         spacer_after: Dict[int, int] = {}
+        # A follower -- an op-amp whose output *is* one of its inputs,
+        # `o1,1,2,2` -- names one node twice, so it spans no columns at
+        # all and the ordering has nowhere to put its body. The symbol
+        # is drawn to the right of that single column regardless, and
+        # lands in whatever gap comes next: in AS2's Practice Problem
+        # 5.9 that is the very gap the second stage occupies, and the
+        # two triangles were drawn 35px into each other.
+        #
+        # Roberto's balloon (10 Sep 2026): "every element claims its
+        # real footprint, and the canvas grows to accommodate the sum
+        # rather than each element being fitted into a grid decided in
+        # advance." A follower's footprint is a column, so it claims
+        # one -- the same spacer the four-terminal block asks for below,
+        # for the same reason.
+        for e in self.opamps:
+            a, b = idx_of.get(_up_of(self, e)), idx_of.get(e.fields[2])
+            if a is not None and a == b:
+                spacer_after[a] = max(spacer_after.get(a, 0), 1)
         # A four-terminal block (#314) also wants one clear column on
         # each *outer* side: its lower terminals leave sideways and rise
         # there to the node row, and that riser must not share a column
@@ -2292,6 +2323,12 @@ class _Layout:
         # What actually occupies the node row, for gap_free below.
         self.row0 = [(lo, hi) for lo, hi, l in placed
                      if l == 0 and hi > lo]
+        # Every stacked row, not just the node row. `row0` answers "is
+        # the node row clear here"; this answers "is the strip *above*
+        # the node row clear here", which is what an above-row body has
+        # to know and what nothing was asking (#369).
+        self.lifted = [(lo, hi) for lo, hi, l in placed
+                       if l > 0 and hi > lo]
 
         # Op-amps all sit in one horizontal band, so two whose
         # input-to-output columns overlap would be drawn through each
@@ -2302,18 +2339,80 @@ class _Layout:
         for e in self.opamps:
             a = self.node_col.get(_up_of(self, e))
             b = self.node_col.get(e.fields[2])
-            if a is not None and b is not None:
-                ops.append((min(a, b), max(a, b), e))
+            if a is None or b is None:
+                continue
+            lo, hi = min(a, b), max(a, b)
+            # A follower's output *is* its row-wired input -- `o1,1,2,2`
+            # -- so both ends are one node and the span comes out zero
+            # wide. A zero-wide span overlaps nothing, so the allocator
+            # sees no conflict and puts both stages of AS2's Practice
+            # Problem 5.9 in lane 0, 35px on top of each other.
+            #
+            # The triangle occupies real width whatever its nodes say:
+            # `_draw_opamp` places it at `x_in + 26` and it is 50px
+            # across, which runs into the next column. So the span
+            # claims that column. An element declares the room it takes
+            # up, and the layout makes room for it (Roberto's balloon,
+            # 10 Sep 2026).
+            if lo == hi:
+                hi = lo + 1
+            ops.append((lo, hi, e))
         ops.sort(key=lambda s: (s[0], s[1]))
-        taken: List[Tuple[int, int, int]] = []
+
+        # Raised op-amps and lane op-amps are measured from different
+        # places, so they are allocated in separate pools. A raised body
+        # hangs from `y_top` and reaches 29px either side of the node
+        # row; a lane body hangs from `y_top + ROW_H/2` and so starts
+        # 46px below the row. Those two never meet -- but a *lane*
+        # offset of 78px does, which is how AS2's Practice Problem 5.9
+        # drew a raised second stage 3px from an unraised first one and
+        # why the raise had to be refused outright whenever a drawing
+        # had more than one op-amp.
+        #
+        # It need not be. The row is one band and the lanes are
+        # another: raise what may be raised onto the row, and let the
+        # rest take lanes underneath. Two raised bodies would collide
+        # with each other, so they are coloured among themselves and
+        # only colour 0 keeps the raise; the loser falls back into the
+        # lane pool, where it is drawn as it always was.
+        self.op_raised: set = set()
+        self.op_above: set = set()
+        rows: List[Tuple[int, int, int]] = []
+        aboves: List[Tuple[int, int, int]] = []
+        lanes = []
         for lo, hi, e in ops:
+            if self.allow_above is not None and e.name in self.allow_above \
+                    and self._above_ok(e) \
+                    and not any(min(hi, h) > max(lo, o) for o, h, _l in aboves):
+                self.op_above.add(e.name)
+                self.op_lane[e.name] = 0
+                aboves.append((lo, hi, 0))
+                continue
+            if self.allow_raise is not None and e.name not in self.allow_raise:
+                lanes.append((lo, hi, e))
+                continue
+            if not self._raise_ok(e):
+                lanes.append((lo, hi, e))
+                continue
+            if any(min(hi, h) > max(lo, o) for o, h, _l in rows):
+                lanes.append((lo, hi, e))
+                continue
+            self.op_raised.add(e.name)
+            self.op_lane[e.name] = 0
+            rows.append((lo, hi, 0))
+
+        taken: List[Tuple[int, int, int]] = []
+        for lo, hi, e in lanes:
             lane = 0
             while any(l == lane and min(hi, h) > max(lo, o)
                       for o, h, l in taken):
                 lane += 1
             self.op_lane[e.name] = lane
             taken.append((lo, hi, lane))
-        self.max_op_lane = max(self.op_lane.values(), default=0)
+        self.max_op_lane = max(
+            [l for n, l in self.op_lane.items()
+             if n not in self.op_raised and n not in self.op_above],
+            default=0)
 
         # Two four-terminal blocks sharing a port, or overlapping at
         # all, are drawn one below the other (#321): the same greedy
@@ -2375,15 +2474,14 @@ class _Layout:
             return rc
         return lc if (nc - lo) <= (hi - nc) else rc
 
-    def raised(self, e: Element) -> bool:
-        """Is this op-amp drawn with its output tip **on** the node row?
+    def _raise_ok(self, e: Element) -> bool:
+        """May this op-amp be drawn on the node row at all?
 
         Three conditions, each measured (see `_draw_opamp`): the
         feedback-divider shape, the orientation flipped, and the stretch
-        of row it would occupy clear. Lives here rather than in the
-        drawing because the node names have to know it too -- a raised
-        op-amp's input runs *above* the row, through the strip the names
-        are lettered in, so those names move aside (#367)."""
+        of row it would occupy clear. Whether it *is* raised is decided
+        by the allocator, which will not put two of them on one stretch
+        of row -- ask `raised()`, not this."""
         if e.name not in self.op_divider or e.name not in self.op_up:
             return False
         a = self.node_col.get(_up_of(self, e))
@@ -2391,6 +2489,49 @@ class _Layout:
         if a is None or b is None:
             return False
         return all(self.gap_free(c) for c in range(min(a, b), max(a, b)))
+
+    def _above_ok(self, e: Element) -> bool:
+        """May this op-amp stand in the band above the node row?
+
+        Offered when its lower input would otherwise take the long way
+        east under the body (#337) -- that is the expensive route the
+        placement exists to replace, and every other op-amp is better
+        served where it already is. All three of its nodes must have
+        columns, since all three leads become drops onto the row."""
+        if not _op_under(self, e):
+            return False
+        nodes = [e.fields[0], e.fields[1], e.fields[2]]
+        if not all(n in self.node_col for n in nodes):
+            return False
+        # And the strip it would stand in has to be free. A lifted
+        # element runs one `stack_h` above the node row for each level,
+        # which is exactly where the band goes: `r1` of Bo2's Drill
+        # Exercise 3.4 spans node 2 to node o on level 1 and was drawn
+        # straight through the body. `_raise_ok` asks this of the node
+        # row through `gap_free`; the same question, one storey up.
+        a = self.node_col[_up_of(self, e)]
+        b = self.node_col[e.fields[2]]
+        c = self.node_col[e.fields[0] if e.fields[1] == _up_of(self, e)
+                          else e.fields[1]]
+        lo, hi = min(a, b, c), max(a, b, c)
+        return not any(lo < h and l < hi for l, h in self.lifted)
+
+    def above(self, e: Element) -> bool:
+        """Is this op-amp drawn in the band above the node row?"""
+        return e.name in self.op_above
+
+    @property
+    def has_above(self) -> bool:
+        return bool(self.op_above)
+
+    def raised(self, e: Element) -> bool:
+        """Is this op-amp drawn with its output tip **on** the node row?
+
+        Lives here rather than in the drawing because the node names
+        have to know it too -- a raised op-amp's input runs *above* the
+        row, through the strip the names are lettered in, so those names
+        move aside (#367)."""
+        return e.name in self.op_raised
 
     def raised_input_nodes(self) -> set:
         """The row-row nodes whose name a raised op-amp's input passes."""
@@ -2416,7 +2557,12 @@ class _Layout:
 
     @property
     def y_top(self) -> float:
-        return MARGIN + self.max_level * self.stack_h
+        # The band an above-row body stands in is added the same way
+        # `op_under` adds one below: the drawing grows rather than the
+        # body being squeezed into space that belongs to something else
+        # (Roberto's balloon, 10 Sep 2026).
+        return (MARGIN + self.max_level * self.stack_h
+                + (OP_ABOVE_H if self.op_above else 0.0))
 
     @property
     def op_under(self) -> bool:
@@ -2461,6 +2607,17 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     its node's column, and the inverting one drops to the rail."""
     n_out = e.fields[2]
     up_node = _up_of(lay, e)                        # wired to the top row
+    # Standing above the row, the input whose node lies further right
+    # takes the *upper* pin: the upper pin is the one with a clear run
+    # over the body's top, and the near input then drops straight down.
+    # In AS2's Practice Problem 5.8 the far input is node 6, which is
+    # the non-inverting one, so the symbol comes out with `+` uppermost
+    # -- which is the "flipping it" Roberto asked for. It is not a
+    # separate instruction; it falls out of which lead has room.
+    if lay.above(e):
+        ca = lay.node_col.get(e.fields[0], -1)
+        cb = lay.node_col.get(e.fields[1], -1)
+        up_node = e.fields[0] if ca > cb else e.fields[1]
     flip = up_node != e.fields[1]                   # n- grounded, pins swap
     dn_node = e.fields[1] if flip else e.fields[0]  # rail, or its own row
     up_sign, dn_sign = ("+", "−") if flip else ("−", "+")
@@ -2486,7 +2643,11 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # 10 Sep 2026). The symbol puts its output at the triangle's centre
     # and the inputs 14.5px off it, so only one of the two can be on the
     # row; the output side is the one that reads as a line.
-    if lay.raised(e):
+    if lay.above(e):
+        # Clear of the row by `OP_ABOVE_GAP`, which is the strip the node
+        # names are lettered in and the strip a near lead turns in.
+        mid = lay.y_top - OP_ABOVE_GAP - h_tri / 2.0
+    elif lay.raised(e):
         mid = lay.y_top + lane * OP_LANE_H
     else:
         mid = lay.y_top + ROW_H / 2.0 + lane * OP_LANE_H
@@ -2496,7 +2657,21 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # meet, but it distorts the symbol; the leads stretch instead.
     h = h_tri
     w = h * 3 ** 0.5 / 2.0
-    tx = max((x_in + x_out) / 2.0 - w / 2.0, x_in + 26)
+    if lay.above(e):
+        # Centred over the gap it spans -- between the *near* input and
+        # the output -- so it stands over the feedback resistor rather
+        # than being dragged out to the far input's column.
+        x_near = lay.px(lay.node_col[dn_node])
+        tx = max(min(x_near, x_out) + (abs(x_out - x_near) - w) / 2.0,
+                 min(x_near, x_out) + 26)
+    elif x_out - x_in > COL_W * 1.5:
+        # A span stretched by a spacer column: stand at the output end
+        # and let the input lead take the slack. Centring here leaves
+        # the output hanging (107px in Practice Problem 5.9) and parks
+        # the body against its neighbour.
+        tx = max(x_out - 26 - w, x_in + 26)
+    else:
+        tx = max((x_in + x_out) / 2.0 - w / 2.0, x_in + 26)
     y_minus, y_plus = mid - h / 4.0, mid + h / 4.0
 
     cv.raw('<path d="M{0:g} {1:g} L{0:g} {2:g} L{3:g} {4:g} Z" fill="none"/>'
@@ -2534,11 +2709,37 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # recorded as and not merely the ideal slope underneath it.
     y_slope = (mid - h / 2.0 + (edge_x - tx) / w * (h / 2.0)
                - h / OP_INK_BANDS)
-    cv.runs(x_name,
-            mid + h / 2 + GAP + LABEL_ASCENT if loop
-            else y_slope - GAP - _name_below(),
-            nm)
+    y_name = (mid + h / 2 + GAP + LABEL_ASCENT if loop
+              else y_slope - GAP - _name_below())
+    cv.runs(x_name, y_name, nm)
 
+    if lay.above(e):
+        tip_a = tx + w
+        x_up = lay.px(lay.node_col[up_node])
+        x_dn = lay.px(lay.node_col[dn_node])
+        # The far input: out of the pin, up over the body, across, and
+        # down onto its node. Over the top rather than under, because
+        # under is where the output's own drop is.
+        #
+        # It has to clear the **name**, not the triangle. Since #338 the
+        # name is set against the hypotenuse, so it already stands above
+        # the top vertex: a lead 12px over the vertex passed 1.6px over
+        # the name, in every drawing that stands a body above the row.
+        # Roberto, 10 Sep 2026: "Names should not be touching the lines."
+        # Measured from the same baseline the name was placed at, so the
+        # two cannot drift apart.
+        y_over = min(mid - h / 2.0, y_name - LABEL_ASCENT) - GAP - 8
+        cv.wire(tx, y_minus, tx - 12, y_minus)
+        cv.wire(tx - 12, y_minus, tx - 12, y_over)
+        cv.wire(tx - 12, y_over, x_up, y_over)
+        cv.wire(x_up, y_over, x_up, lay.y_top)
+        # The near input: straight out of the pin and down.
+        cv.wire(tx, y_plus, x_dn, y_plus)
+        cv.wire(x_dn, y_plus, x_dn, lay.y_top)
+        # The output: straight out of the tip and down.
+        cv.wire(tip_a, mid, x_out, mid)
+        cv.wire(x_out, mid, x_out, lay.y_top)
+        return None
     # upper input: straight down from its node, then in
     cv.wire(x_in, lay.y_top, x_in, y_minus)
     cv.wire(x_in, y_minus, tx, y_minus)
@@ -2548,9 +2749,26 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     if any(o.name != e.name and _up_of(lay, o) == up_node
            and lay.op_lane.get(o.name, 0) > lane for o in lay.opamps):
         cv.dot(x_in, y_minus)
-    # lower input: out to the left, then down to the rail (or up to its
-    # own node row if it is not grounded)
-    x_p = x_in - 30 - lane * 16
+    # lower input: out of the pin, then down to the rail (or up to its
+    # own node row if it is not grounded).
+    #
+    # Which way it leaves is decided by where it is going. Leaving left
+    # is right for a grounded input -- the rail is below -- and for a
+    # captured source, which is drawn in the drop itself. But when the
+    # node lies to the right and the route is the under-the-body one of
+    # #337, the lead used to walk 30px past the *input* column first,
+    # which in a cascade means past the previous stage and its feedback,
+    # and then turn and cross all of it again going east. In AS2's
+    # Practice Problem 5.9 that is 137px the wrong way for 396px back,
+    # and both of the drawing's crossings are on the westward leg.
+    #
+    # Roberto's rule, 10 Sep 2026, and it is meant to outlive this
+    # drawing: **a lead leaves toward its destination.** Nothing can be
+    # crossed on the way to somewhere you were already going.
+    if _op_under(lay, e):
+        x_p = tx - 12 - lane * 8
+    else:
+        x_p = x_in - 30 - lane * 16
     cv.wire(tx, y_plus, x_p, y_plus)
     src = lay.op_src.get(e.name)
     if src is not None:
@@ -2689,8 +2907,113 @@ def _ground_symbol(cv: _Canvas, x: float, y: float) -> None:
     cv.text(x, y + 20 + LABEL_ASCENT + GAP, "0")
 
 
+def _cost(svg: str) -> Tuple[int, int, int]:
+    """Roberto's price list, read off the finished drawing.
+
+    "Think of this as an optimisation problem, where every bend costs
+    money, and every cross costs a lot of money, and where straight
+    lines and elements in the same row are rewarded" (10 Sep 2026). The
+    tuple is compared lexicographically, which is what "a lot" means:
+    no number of saved bends buys one more crossing.
+
+    A crossing is counted as the drawing's own no-connection hop rather
+    than by intersecting the wire list. A symbol draws its leads inside
+    its own group, so a wire-list count misses every crossing over a
+    lead: it had AS2's Practice Problem 5.9 at one crossing where the
+    picture -- and the drawer -- had three."""
+    body = re.sub(r"<g transform=.*?</g>", "", svg, flags=re.S)
+    hor: List[Tuple[float, float, float]] = []
+    ver: List[Tuple[float, float, float]] = []
+    for x1, y1, x2, y2 in re.findall(
+            r'<line x1="([-\d.]+)" y1="([-\d.]+)" '
+            r'x2="([-\d.]+)" y2="([-\d.]+)"/>', body):
+        _seg(hor, ver, float(x1), float(y1), float(x2), float(y2))
+    for d in re.findall(r'<path d="([^"]+)"', body):
+        pts = [(float(x), float(y)) for x, y in
+               re.findall(r"[ML]\s*([-\d.]+)[ ,]\s*([-\d.]+)", d)]
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            _seg(hor, ver, x1, y1, x2, y2)
+    bends = 0
+    for x0, x1, y in hor:
+        for x, y0, y1 in ver:
+            if (abs(x - x0) < 0.5 or abs(x - x1) < 0.5) \
+                    and (abs(y - y0) < 0.5 or abs(y - y1) < 0.5):
+                bends += 1
+    return (svg.count(_HOP_ARC), bends, len(hor) + len(ver))
+
+
+def _seg(hor, ver, x1: float, y1: float, x2: float, y2: float) -> None:
+    if abs(y1 - y2) < 0.01 and abs(x1 - x2) > 0.01:
+        hor.append((min(x1, x2), max(x1, x2), y1))
+    elif abs(x1 - x2) < 0.01 and abs(y1 - y2) > 0.01:
+        ver.append((x1, min(y1, y2), max(y1, y2)))
+
+
 def _render(elements: List[Element], marks=None) -> str:
+    """Draw it, and where the drawer has a choice, draw it both ways and
+    keep the cheaper picture.
+
+    The only choice it has is which op-amps sit on the node row (#367).
+    A hand-written predicate for that took most of a day and still got
+    AS2's Practice Problem 5.9 wrong in both directions; the price list
+    above gets all seven candidates in the example book right, agreeing
+    with every drawing Roberto has ruled on -- raise the two lone
+    non-inverting stages, leave the three cascades in the band, and
+    raise Practice Problem 5.9, which is the one he asked for by name.
+
+    Subsets, not all-or-nothing, because two candidates in one drawing
+    need not agree; capped, because the count is exponential and no
+    example in the book has more than one."""
     lay = _Layout(elements)
+    rows = sorted(lay.op_raised)
+    ups = sorted(_Layout(elements, allow_above=set(
+        e.name for e in lay.opamps)).op_above)
+    if rows or ups:
+        best, best_cost = None, None
+        for choice in _placements(rows, ups):
+            c = _cost(_render_once(elements, marks, *choice))
+            if best_cost is None or c < best_cost:
+                best, best_cost = choice, c
+        # Drawn again, so the winner is the last thing drawn. The review
+        # harness and the editable-drawing exporter both read the canvas
+        # by hooking `_Canvas._flush_wires`, and a hook sees the last
+        # pass, not the returned one: choosing without this put four
+        # label findings on drawings whose labels sit nowhere near a
+        # wire, naming wires that belong to the rejected layout.
+        return _render_once(elements, marks, *best)
+    return _render_once(elements, marks, set(), set())
+
+
+def _placements(rows: List[str], ups: List[str]):
+    """Every combination of "on the row" and "above the row" worth
+    drawing, the plain banded layout first.
+
+    An op-amp cannot be both, so the two subsets are kept disjoint.
+    Capped: the count is exponential and no example in the book offers
+    more than two candidates, so beyond that only the extremes are
+    tried rather than a partial search that would look thorough."""
+    names = sorted(set(rows) | set(ups))
+    if len(names) > 3:
+        return [(set(), set()), (set(rows), set()), (set(), set(ups))]
+    out = []
+    for k in range(3 ** len(names)):
+        r, a, n = set(), set(), k
+        for name in names:
+            pick, n = n % 3, n // 3
+            if pick == 1 and name in rows:
+                r.add(name)
+            elif pick == 2 and name in ups:
+                a.add(name)
+        if (r, a) not in [(x, y) for x, y in out]:
+            out.append((r, a))
+    return out
+
+
+def _render_once(elements: List[Element], marks=None,
+                 allow_raise: Optional[set] = None,
+                 allow_above: Optional[set] = None) -> str:
+    lay = _Layout(elements, allow_raise=allow_raise,
+                  allow_above=allow_above)
     cv = _Canvas()
     y_top, y_bot = lay.y_top, lay.y_bot
     # Oriented segment per element, n1 end first: the coupling dots need

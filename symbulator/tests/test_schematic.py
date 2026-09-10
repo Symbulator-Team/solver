@@ -20,6 +20,7 @@ import pytest
 
 from symbulator.schematic import to_svg, draw, _split_name, MARGIN, ROW_H
 from symbulator.elements import CircuitError
+import symbulator.schematic as schematic
 
 
 DIVIDER = "e1,1,0,12:r1,1,2,4:r2,2,0,4"
@@ -211,26 +212,96 @@ def test_short_values_stay_at_the_element():
 
 # --- crossings and junctions -------------------------------------------
 
+def _wire_segments(svg):
+    """The routing wires, in absolute coordinates.
+
+    A symbol draws its own leads inside a `<g transform=...>` in local
+    coordinates, so those are stripped first: mixing the two frames
+    invents crossings that are not on the page."""
+    body = re.sub(r"<g transform=.*?</g>", "", svg, flags=re.S)
+    hor, ver = [], []
+    MIN = 12.0
+    # A wire with no hop on it is a `<line>`; only one carrying a hop is
+    # written as a `<path>`. Reading paths alone sees just the wires that
+    # are already marked, so the check cannot fail -- which is how this
+    # test passed while its detector was blind.
+    for x1, y1, x2, y2 in re.findall(
+            r'<line x1="([-\d.]+)" y1="([-\d.]+)" '
+            r'x2="([-\d.]+)" y2="([-\d.]+)"', body):
+        x1, y1, x2, y2 = float(x1), float(y1), float(x2), float(y2)
+        if abs(y1 - y2) < 0.01 and abs(x1 - x2) >= MIN:
+            hor.append((min(x1, x2), max(x1, x2), y1))
+        elif abs(x1 - x2) < 0.01 and abs(y1 - y2) >= MIN:
+            ver.append((x1, min(y1, y2), max(y1, y2)))
+    for d in re.findall(r'<path d="([^"]+)"', body):
+        # A closed path is a symbol outline drawn at the top level -- the
+        # op-amp triangle, the ground -- not a wire. Its own edges
+        # otherwise read as wires and cross everything near them.
+        if "Z" in d:
+            continue
+        pts = [(float(x), float(y)) for x, y in
+               re.findall(r"[ML]\s*([-\d.]+)[ ,]\s*([-\d.]+)", d)]
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            # A polarity mark is two crossed 7px strokes drawn at the
+            # top level, and reads as a wire crossing a wire unless
+            # short runs are ignored. No routing wire is that small.
+            MIN = 12.0
+            if abs(y1 - y2) < 0.01 and abs(x1 - x2) >= MIN:
+                hor.append((min(x1, x2), max(x1, x2), y1))
+            elif abs(x1 - x2) < 0.01 and abs(y1 - y2) >= MIN:
+                ver.append((x1, min(y1, y2), max(y1, y2)))
+    return hor, ver
+
+
+def _hop_centres(svg):
+    """Where the drawing marks a no-connection hop. The arc is written
+    `L<x-5> <y> A5 5 0 0 1 <x+5> <y>`, so its centre is the midpoint."""
+    out = []
+    for a, b, c, d in re.findall(
+            r"L\s*([-\d.]+)\s+([-\d.]+)\s*A5 5 0 0 1\s*"
+            r"([-\d.]+)\s+([-\d.]+)", svg):
+        out.append(((float(a) + float(c)) / 2.0,
+                    (float(b) + float(d)) / 2.0))
+    return out
+
+
+def _junction_dots(svg):
+    return [(float(x), float(y)) for x, y in
+            re.findall(r'<circle cx="([-\d.]+)" cy="([-\d.]+)"', svg)]
+
+
 def test_unconnected_crossings_are_drawn_as_hops():
-    """A wire forced past another wire marks the crossing with the
-    semicircular no-connection hop (an arc in the path data), never a
-    bare X crossing.
+    """Wherever two wires cross without joining, the drawing marks it
+    with the semicircular hop -- never a bare X.
 
-    The circuit this used to check is the non-inverting stage, which
-    since 10 Sep 2026 has no crossing left to hop: ordering the output
-    before the divider node puts the feedback resistor in the row and
-    the input runs straight in (see `_node_order`). Asserting an arc
-    there asserted the workaround rather than the property, and went red
-    when the workaround stopped being needed. The property is checked on
-    a cascade, which genuinely forces one, and the old circuit now
-    carries the stronger claim: no crossing at all."""
-    forced = to_svg("e,1,0,20'm:o1,1,2,a:o2,a,b,o:ro,o,b,10'k:"
-                    "r4,b,0,4'k:r2,a,2,12'k:r3,2,0,3'k")
-    assert "A5 5 0 0" in forced
-
-    clean = to_svg("e,1,0,vs:r1,1,2,rr1:r2,2,0,rr2:o,2,3,o:"
-                   "r3,o,3,rr3:r4,3,0,rr4")
-    assert "A5 5 0 0" not in clean
+    Stated as the invariant rather than against a circuit that happens
+    to have a crossing. Twice before this test named such a circuit and
+    demanded the arc; improving that circuit's layout removed the
+    crossing and the test went red for a *better* drawing. What must
+    always hold is that no crossing is left unmarked, which is equally
+    true of a drawing with no crossings at all."""
+    for desc in (
+            # two op-amp stages, a feedback divider, and a follower
+            "e,1,0,vs:r1,1,2,rr1:r2,2,0,rr2:o,2,3,o:r3,o,3,rr3:r4,3,0,rr4",
+            "e,1,0,4:o1,1,2,2:o2,2,3,o:ro,3,0,4'k:r6,3,o,6'k",
+            "e,1,0,20'm:o1,1,2,a:o2,a,b,o:ro,o,b,10'k:r4,b,0,4'k:"
+            "r2,a,2,12'k:r3,2,0,3'k",
+            # a ladder with plenty of chances to cross
+            "e1,1,0,10:r1,1,2,1:r2,2,3,2:r3,3,0,3:r4,2,0,4:r5,1,3,5",
+    ):
+        svg = to_svg(desc)
+        hor, ver = _wire_segments(svg)
+        marked = _hop_centres(svg) + _junction_dots(svg)
+        bare = []
+        for x0, x1, y in hor:
+            for x, y0, y1 in ver:
+                if not (x0 + 0.5 < x < x1 - 0.5 and y0 + 0.5 < y < y1 - 0.5):
+                    continue                    # not a proper crossing
+                if any(abs(mx - x) < 6 and abs(my - y) < 6
+                       for mx, my in marked):
+                    continue                    # hopped, or a junction
+                bare.append((x, y))
+        assert not bare, "bare crossing at %r in %r" % (bare[:3], desc)
 
 
 def test_a_wire_never_crosses_an_element_body():
@@ -852,3 +923,122 @@ def test_the_feedback_divider_admits_a_parallel_pair_but_not_a_grounded_input():
         ipos.setdefault(m.group(2), float(m.group(1)))
     assert ipos.get("1", 1e9) < ipos.get("o", -1e9), (
         "the summing node should precede the output here: %r" % ipos)
+
+
+# --- the cost chooser (#367) ----------------------------------------
+
+_TRIANGLE = re.compile(r'<path d="M([-\d.]+) ([-\d.]+) L([-\d.]+) '
+                       r'([-\d.]+) L([-\d.]+) ([-\d.]+) Z" fill="none"/>')
+
+CASCADES = [
+    # a follower feeding a non-inverting stage: the shape that drew its
+    # two triangles 35px into each other
+    "e,1,0,4:o1,1,2,2:o2,2,3,o:ro,3,0,4'k:r6,3,o,6'k",
+    "e,1,0,20'm:o1,1,2,a:o2,a,b,o:ro,o,b,10'k:r4,b,0,4'k:"
+    "r2,a,2,12'k:r3,2,0,3'k",
+    "e,1,0,vs:r1,2,o,1/1:r2,1,2,1/2:r3,2,3,1/3:r4,4,0,1/4:r5,4,o,1/5:"
+    "o1,0,2,3:o2,3,4,o",
+    "e1,1,0,2:e2,2,0,1.5:o1,1,3,3:r1,2,5,10'k:r2,3,6,20'k:r5,5,4,50'k:"
+    "o2,0,5,4:r3,6,4,30'k:r6,6,o,60'k:o3,0,6,o",
+    "e1,1,0,8.:e2,2,0,8.01:o1,1,3,3:o2,2,4,4:r1,3,5,20'k:r2,4,6,20'k:"
+    "r3,5,o,40'k:r4,6,0,40'k:o3,6,5,o:r5,o,0,10'k",
+]
+
+
+def _body_strips(svg):
+    """Each op-amp body's horizontal strip, (x0, x1), left to right."""
+    out = []
+    for t in _TRIANGLE.findall(svg):
+        xs = [float(t[0]), float(t[2]), float(t[4])]
+        out.append((min(xs), max(xs)))
+    return sorted(out)
+
+
+@pytest.mark.parametrize("desc", CASCADES)
+def test_every_opamp_body_gets_a_strip_of_its_own(desc):
+    """No two op-amp bodies share horizontal ground.
+
+    A follower names one node twice -- `o1,1,2,2` -- so it spans no
+    columns, and the ordering had nowhere to put its body: the symbol is
+    drawn to the right of that single column whatever its nodes say, and
+    landed in the gap the next stage occupies. AS2's Practice Problem
+    5.9 drew its two triangles 35px into each other.
+
+    Stated as strips rather than as rectangles on purpose. The first
+    version of this test asked whether the two *boxes* overlapped, and
+    two bodies in different lanes never do -- so it passed on the
+    mangled drawing, and passed again with the fix removed. Lanes move
+    an op-amp down; they do not give it room.
+
+    Roberto's balloon (10 Sep 2026): "every element claims its real
+    footprint, and the canvas grows to accommodate the sum rather than
+    each element being fitted into a grid decided in advance." A
+    follower's footprint is a column, so it asks for one."""
+    strips = _body_strips(to_svg(desc))
+    for a, b in zip(strips, strips[1:]):
+        assert a[1] <= b[0], (
+            "op-amp bodies %r and %r overlap by %.1fpx in %r"
+            % (a, b, a[1] - b[0], desc))
+
+
+@pytest.mark.parametrize("desc", CASCADES)
+def test_the_drawing_chosen_never_pays_an_extra_crossing(desc):
+    """"Every bend costs money, and every cross costs a lot of money"
+    (Roberto, 10 Sep 2026), and "a lot" is not a weight to be tuned: no
+    number of saved bends buys one more crossing.
+
+    Counted here rather than asked of `_cost`. The first version of this
+    test compared the chosen drawing's cost against each alternative's
+    cost through `_cost` itself, so swapping crossings and bends inside
+    it left the test green -- the chooser and the check simply agreed
+    with each other about a price list that was now wrong. Sabotage is
+    what showed that; the rule is to ask what a check would print if the
+    thing it tests were broken."""
+    els = schematic.parse_circuit(desc, expand_si=False)
+    options = sorted(schematic._Layout(els).op_raised)
+    if not options:
+        pytest.skip("no op-amp here may be raised")
+    chosen = to_svg(desc).count(schematic._HOP_ARC)
+    for k in range(1 << len(options)):
+        sub = {options[i] for i in range(len(options)) if k >> i & 1}
+        assert chosen <= schematic._render_once(els, None, sub).count(
+            schematic._HOP_ARC), (
+            "a drawing with fewer crossings was on offer for %r: %r"
+            % (desc, sub))
+
+
+@pytest.mark.parametrize("desc", CASCADES)
+def test_the_drawing_returned_is_the_last_one_drawn(desc):
+    """What a canvas hook captures is what the caller gets back.
+
+    The chooser draws each option in turn, and two tools outside this
+    package -- the review harness and the editable-drawing exporter --
+    read the canvas by hooking `_Canvas._flush_wires` rather than by
+    parsing the SVG. A hook sees the *last* pass. Returning the best
+    drawing while leaving a rejected one in the canvas put four label
+    findings on drawings whose labels sit nowhere near a wire, each
+    naming a wire that belongs to the layout that lost.
+
+    So the winner is drawn again at the end, and this is the guard: the
+    wires the canvas last recorded must all be in the SVG returned."""
+    seen = {}
+    original = schematic._Canvas._flush_wires
+
+    def spy(self):
+        seen["wires"] = list(self.wires)
+        return original(self)
+
+    schematic._Canvas._flush_wires = spy
+    try:
+        svg = to_svg(desc)
+    finally:
+        schematic._Canvas._flush_wires = original
+
+    body = re.sub(r"<g transform=.*?</g>", "", svg, flags=re.S)
+    for x1, y1, x2, y2 in seen["wires"]:
+        if abs(x1 - x2) < 0.01 and abs(y1 - y2) < 0.01:
+            continue                       # a zero-length stub draws nothing
+        pat = "%g" % x1, "%g" % y1, "%g" % x2, "%g" % y2
+        assert all(p in body for p in pat), (
+            "wire %r was recorded but is not in the returned drawing" %
+            ((x1, y1, x2, y2),))
