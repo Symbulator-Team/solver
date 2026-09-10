@@ -582,6 +582,11 @@ class _Canvas:
         # them lets a verification harness prove that it didn't.
         self.obstacles: List[Tuple[float, float, float, float]] = []
         self.dots: List[Tuple[float, float]] = []
+        # Where each label's ink lands, in canvas coordinates. Recorded
+        # for the same reason `ink` is: a measurement that looks only at
+        # symbols measures half the picture, and it is the labels that
+        # collide. #212 cost three rounds to that distinction.
+        self.labels: List[Tuple[float, float, float, float]] = []
 
     def _bound(self, *pts: Tuple[float, float]) -> None:
         for x, y in pts:
@@ -729,6 +734,7 @@ class _Canvas:
         low = (_name_below() if any(sub for _t, sub, _it in runs)
                else LABEL_DESCENT)
         self._bound((x0, y - LABEL_ASCENT), (x1, y + low))
+        self.labels.append((x0, y - LABEL_ASCENT, x1, y + low))
         body, shift = [], 0.0
         for t, sub, ital in runs:
             want = SUB_DY if sub else 0.0
@@ -1874,13 +1880,24 @@ class _Layout:
 
     def __init__(self, elements: List[Element],
                  allow_raise: Optional[set] = None,
-                 allow_above: Optional[set] = None) -> None:
+                 allow_above: Optional[set] = None,
+                 row_h: Optional[float] = None,
+                 gaps: Optional[List[float]] = None) -> None:
         # Which op-amps this pass may draw on the node row, and which
         # above it. `None` means every candidate; `_render` calls the
         # layout once per combination and keeps the cheapest drawing
         # (see `_cost`).
         self.allow_raise = allow_raise
         self.allow_above = allow_above
+        # The band between the node row and the ground rail. `ROW_H`
+        # unless a measuring pass has found the room is not needed --
+        # see `_tighten_band`. The balloon deflates as well as inflates
+        # (Roberto, 10 Sep 2026).
+        self.row_h = float(ROW_H if row_h is None else row_h)
+        # The width of each column gap, or empty for the uniform COL_W
+        # every gap had before #373. Set by a measuring pass -- see
+        # `_tighten_gaps`.
+        self.gaps: List[float] = list(gaps or ())
         # Which sources are controlled -- computed once, from the whole
         # circuit, because the answer for one source depends on what
         # names the *others* introduced (see `_controlled`).
@@ -2545,7 +2562,18 @@ class _Layout:
 
     # pixel helpers
     def px(self, col: int) -> float:
-        return MARGIN + col * COL_W
+        """Where column `col` stands.
+
+        `MARGIN + col * COL_W` until #373: every gap was 132px whether
+        it carried a stretched resistor with a two-line label or nothing
+        but a wire. `self.gaps` holds a width per gap, and a gap is
+        never wider than `COL_W`, so a drawing can only ever narrow."""
+        if not self.gaps:
+            return MARGIN + col * COL_W
+        x = MARGIN
+        for i in range(col):
+            x += self.gaps[i] if i < len(self.gaps) else COL_W
+        return x
 
     @property
     def stack_h(self) -> float:
@@ -2573,7 +2601,7 @@ class _Layout:
     def y_bot(self) -> float:
         # `op_under` is Roberto's "make the circuit taller": the band it
         # adds is what the under-run travels in, clear of every body.
-        return (self.y_top + ROW_H + self.max_op_lane * OP_LANE_H
+        return (self.y_top + self.row_h + self.max_op_lane * OP_LANE_H
                 + self.max_block_lane * BLOCK_LANE_H
                 + (OP_UNDER_H if self.op_under else 0.0))
 
@@ -2650,7 +2678,7 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     elif lay.raised(e):
         mid = lay.y_top + lane * OP_LANE_H
     else:
-        mid = lay.y_top + ROW_H / 2.0 + lane * OP_LANE_H
+        mid = lay.y_top + lay.row_h / 2.0 + lane * OP_LANE_H
     # The triangle is a fixed equilateral symbol, centred in the gap
     # between the input and output columns. Widening it to span whatever
     # gap it happens to sit in would be the easy way to make the wires
@@ -2980,8 +3008,386 @@ def _render(elements: List[Element], marks=None) -> str:
         # pass, not the returned one: choosing without this put four
         # label findings on drawings whose labels sit nowhere near a
         # wire, naming wires that belong to the rejected layout.
-        return _render_once(elements, marks, *best)
-    return _render_once(elements, marks, set(), set())
+        return _final(elements, marks, best)
+    return _final(elements, marks, (set(), set()))
+
+
+def _final(elements: List[Element], marks, choice) -> str:
+    """Draw the chosen layout, with the band and the column gaps closed
+    to what this particular drawing needs (#373).
+
+    The tightening is geometry only -- the columns, the levels and every
+    op-amp's placement are already decided, so no wire changes which
+    side of anything it passes. The price list is checked all the same
+    and the full size kept if it ever disagrees: a cost that moves here
+    would mean the tightening had changed the drawing's topology, which
+    is a bug, not a trade.
+
+    Roberto's balloon, both ways round. It only ever inflated -- `ROW_H`
+    and `COL_W` are constants, so a drawing of one source and two
+    resistors was laid out on the same grid as a three-phase network.
+    Measured over the 356 built-in drawings, the median one carried
+    113px of air in its band and 95px in every column gap."""
+    base: dict = {}
+    full = _render_once(elements, marks, *choice, out=base)
+    budget = _collisions(base["cv"])
+    cost = _cost(full)
+    row_h = _tighten_band(elements, marks, choice)
+    gaps = _tighten_gaps(elements, marks, choice, row_h)
+
+    # Both relaxations, then each alone, then neither. The band and the
+    # gaps are checked *together* because they interact: closing the
+    # band moves every body and its labels up, which is how `iCO` came
+    # to sit on `8∠-40°` in AS7's Example 10.13 with the gaps left
+    # untouched. A tightening that is checked only in the dimension it
+    # moves is not checked.
+    for try_h, try_g in ((row_h, gaps), (row_h, None), (None, gaps)):
+        if try_h is None and try_g is None:
+            continue
+        probe: dict = {}
+        svg = _render_once(elements, marks, *choice,
+                           row_h=try_h, gaps=try_g, out=probe)
+        h, sf = _collisions(probe["cv"])
+        if _cost(svg) == cost and h <= budget[0] and sf <= budget[1]:
+            return svg
+    return _render_once(elements, marks, *choice)
+
+
+# The shortest bare lead the band will leave between a body (or its
+# label) and the node row or the ground rail.
+#
+# **This is a design choice, not a derived number, and it is Roberto's
+# to make.** What measurement can say is the range it may live in, and
+# both ends were measured rather than guessed:
+#
+#   * below about 5 the review harness goes red -- squeezed to 2, it
+#     reports 26 drawings with a label on a symbol or an element drawn
+#     through an op-amp's body;
+#   * the book as shipped sits at 56.6 on half its drawings, and that
+#     number is not a clearance anyone chose either -- it is what
+#     `(ROW_H - 36.8) / 2` happens to leave beside a resistor.
+#
+# So the honest statement is that anything from ~10 to ~57 draws a legal
+# picture and the choice between them is a matter of how a schematic
+# should look. 34 is the midpoint, offered as a starting point for him
+# to move. `tools/sweep_lead.py` renders the same circuits at several
+# values side by side.
+LEAD_MIN = 34.0
+ROW_H_MIN = 96.0   # the band never deflates past this, whatever is in
+# it. A drawing with nothing hanging in the band still has to look like
+# a circuit rather than two lines close together.
+
+
+def _band_content(cv: "_Canvas", lay: "_Layout"):
+    """The separate things standing in the band, one box each.
+
+    Symbols **and labels**: a measurement that looks only at symbols
+    measures half the picture, and it is the labels that collide.
+
+    Two collapses, both of them one object reported twice. An op-amp
+    draws its wedge as `OP_INK_BANDS` horizontal strips, so consecutive
+    strips of one triangle sit 2.4px apart -- an unguarded pair test
+    calls that the tightest gap in the drawing, on every op-amp drawing
+    in the book. And a body that is also a keep-out reports both, over
+    the same rectangle. Anything inside an obstacle or a block belongs
+    to it; what is left is merged where the boxes touch.
+
+    A body that straddles the node row is not in the band at all -- a
+    raised op-amp reaches 29px either side of the row (#367) -- so it
+    is dropped rather than pinning the band at its own clearance."""
+    keep = list(cv.obstacles) + [b for b in getattr(cv, "_blocks", ())]
+    loose = []
+    for x0, y0, x1, y1 in list(cv.inks) + list(cv.labels):
+        if any(bx0 - 1 <= x0 and x1 <= bx1 + 1
+               and by0 - 1 <= y0 and y1 <= by1 + 1
+               for bx0, by0, bx1, by1 in keep):
+            continue
+        loose.append([x0, y0, x1, y1])
+    merged: List[List[float]] = []
+    for b in sorted(loose, key=lambda b: (b[0], b[1])):
+        for m in merged:
+            if b[0] <= m[2] + 1 and m[0] <= b[2] + 1 \
+                    and b[1] <= m[3] + 1 and m[1] <= b[3] + 1:
+                m[0], m[1] = min(m[0], b[0]), min(m[1], b[1])
+                m[2], m[3] = max(m[2], b[2]), max(m[3], b[3])
+                break
+        else:
+            merged.append(list(b))
+    out = []
+    for x0, y0, x1, y1 in [tuple(m) for m in merged] + keep:
+        if y0 < lay.y_top + 0.5 or y1 > lay.y_bot - 0.5:
+            continue
+        out.append((x0, y0, x1, y1))
+    return out
+
+
+def _tighten_band(elements: List[Element], marks, choice) -> Optional[float]:
+    """How short the band may be for *this* drawing, or None to leave it.
+
+    Roberto's balloon has only ever inflated: `ROW_H` is a constant, so
+    the band between the node row and the ground rail is 150px whether
+    it holds a stacked pair of resistors or one 30px source. Bo2's
+    Drill Exercise 3.2 is his example -- a 30px source with about 156px
+    of bare lead wrapped round it -- and across the book the median
+    drawing carries **113px of air** in that band.
+
+    Measured, not modelled. The drawing is rendered once at the full
+    band and asked what actually stands in it; the band is then closed
+    until the tightest thing in it is `LEAD_MIN` from the row and from
+    the rail.
+
+    One number is enough for the whole band because every vertical gap
+    in it closes at the same rate. A body hangs at the band's midpoint
+    (or at a lane offset below the row) and the rail sits at the foot,
+    so shortening the band by `d` moves each body up by `d/2` and the
+    rail up by `d` -- which takes `d/2` off the gap above *and* the gap
+    below. So the shortest gap anywhere governs, and the answer is
+    `2 * (shortest - LEAD_MIN)`.
+
+    Refused outright where the arithmetic above does not hold:
+
+      * a four-terminal block sizes its own box against `ROW_H` through
+        `PORT_BOX_H` and draws its band from the constant, so a layout
+        whose `row_h` disagreed with it would tear;
+      * an under-run travels at `y_under`, half the added band above the
+        rail, so bodies must clear *that* rather than the rail -- which
+        is measured here rather than being a reason to refuse."""
+    if not elements:
+        return None
+    if any(e.kind == "t" or e.kind in PORT_BLOCK for e in elements):
+        return None                 # sizes its own box against ROW_H
+    probe: dict = {}
+    _render_once(elements, marks, choice[0], choice[1], out=probe)
+    lay, cv = probe["lay"], probe["cv"]
+    floor = lay.y_under if lay.op_under else lay.y_bot
+    boxes = _band_content(cv, lay)
+    if not boxes:
+        return None
+    slack = min(min(y0 - lay.y_top, floor - y1) for _x0, y0, _x1, y1 in boxes)
+    drop = 2.0 * (slack - LEAD_MIN)
+    row_h = max(ROW_H_MIN, lay.row_h - drop)
+    return row_h if row_h < lay.row_h - 0.5 else None
+
+
+H_CLEAR = 20.0     # clear air either side of the widest thing standing
+# in a column gap. Like `LEAD_MIN`, a design choice with a measured
+# range rather than a derived number.
+LABEL_APART = 18.0  # two labels on one line stay at least this far
+# apart. Like LEAD_MIN and H_CLEAR, a look-and-feel number with a
+# measured range: the book as shipped has a median of 45 and a
+# minimum of 8.9, so 18 is tighter than today and legible.
+COL_W_MIN = 60.0   # a gap never narrows past this, so a column of bare
+# wire still reads as a span rather than a kink.
+
+
+def _collisions(cv: "_Canvas") -> Tuple[int, float]:
+    """What is on top of what, as (hard, soft).
+
+    **hard** is a fault: two labels overlapping, a label on a
+    symbol's ink or on a wire, a wire or an element through a body.
+    **soft** is only tight: two labels on one line closer than
+    `LABEL_APART`.
+
+    Two numbers rather than one, because a relaxation that compares
+    totals will happily spend a near-miss it started with on a real
+    overlap. That is exactly what it did: at the full width `iCO`
+    sat 17.5px from `8∠-40°` in AS7's Example 10.13 -- one soft --
+    and the narrowed drawing had them overlapping -- one hard --
+    so the count matched and the fault shipped past a green check.
+
+    Two labels overlapping, or a label on a symbol's ink, or a wire
+    through an op-amp's body -- the three faults the review harness
+    reports, computed here so the drawer can check its own work before
+    it narrows anything.
+
+    A label sitting inside a block's box is not a fault: a two-port's
+    parameters are drawn there on purpose. Nor is a label over the ink
+    of the element it belongs to, which is why ink is compared only
+    against labels that overhang it by more than `GAP`."""
+    hard, soft = 0, 0.0
+    # The canvas sizes a label from a character count at 7.2px an
+    # advance; the review harness uses 7.3 and calls a 1px overlap a
+    # finding where `GAP` would wave it through. Both are estimates of
+    # the same ink, so the box is widened by a pixel and the tolerance
+    # matched -- a check that is looser than the guard downstream of it
+    # is a check that reports clean and ships a finding.
+    labels = [(x0 - 1.0, y0, x1 + 1.0, y1) for x0, y0, x1, y1 in cv.labels]
+    touch = 1.0
+    # Rule 7 -- *lines should not be together if they can be apart* --
+    # applies to labels, and "do they overlap?" is not that question.
+    # Narrowing the gaps to the point where nothing quite touches took
+    # the closest pair of labels in the book from 45px apart (median) to
+    # 2.0px, between `50Ω` and `iRX` on TR5's Figure 4-4. The review
+    # harness passed every one of them.
+    for i in range(len(labels)):
+        ax0, ay0, ax1, ay1 = labels[i]
+        for j in range(i + 1, len(labels)):
+            bx0, by0, bx1, by1 = labels[j]
+            if min(ay1, by1) - max(ay0, by0) <= 0:
+                continue                    # not on the same line
+            d = max(bx0 - ax1, ax0 - bx1)
+            if 0 <= d < LABEL_APART:
+                # How far short of `LABEL_APART` it falls, not that it
+                # falls short. A count lets an already-tight pair be
+                # tightened further for free -- 17.5px to 4.7px is one
+                # near-miss before and one after -- and the deficit
+                # does not.
+                soft += LABEL_APART - d
+    for i in range(len(labels)):
+        ax0, ay0, ax1, ay1 = labels[i]
+        for j in range(i + 1, len(labels)):
+            bx0, by0, bx1, by1 = labels[j]
+            if ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1:
+                hard += 1
+    for lx0, ly0, lx1, ly1 in labels:
+        for ix0, iy0, ix1, iy1 in cv.inks:
+            ox = min(lx1, ix1) - max(lx0, ix0)
+            oy = min(ly1, iy1) - max(ly0, iy0)
+            if ox > GAP and oy > GAP:
+                hard += 1
+    hor = [w for w in cv.wires if abs(w[1] - w[3]) < _EPS]
+    ver = [w for w in cv.wires if abs(w[0] - w[2]) < _EPS]
+    for lx0, ly0, lx1, ly1 in labels:
+        for x0, y, x1, _y in hor:
+            if x0 < lx1 - touch and lx0 + touch < x1 \
+                    and ly0 + touch < y < ly1 - touch:
+                hard += 1
+        for x, y0, _x, y1 in ver:
+            if y0 < ly1 - touch and ly0 + touch < y1 \
+                    and lx0 + touch < x < lx1 - touch:
+                hard += 1
+    # A wire through an element's own body -- the `half` zone either
+    # side of its midpoint, which is the part of an element's axis a
+    # wire may never cross (its leads may be, with a hop).
+    for x1, y, x2, _y in hor:
+        for sx1, sy1, sx2, sy2, half in cv.esegs:
+            if abs(sx1 - sx2) > _EPS or half <= 0:
+                continue
+            mid = (sy1 + sy2) / 2.0
+            if x1 + 0.5 < sx1 < x2 - 0.5 and sy1 + 0.5 < y < sy2 - 0.5 \
+                    and abs(y - mid) < half + 2:
+                hard += 1
+    for x, y1, _x, y2 in ver:
+        for sx1, sy1, sx2, sy2, half in cv.esegs:
+            if abs(sy1 - sy2) > _EPS or half <= 0:
+                continue
+            mid = (sx1 + sx2) / 2.0
+            if y1 + 0.5 < sy1 < y2 - 0.5 and sx1 + 0.5 < x < sx2 - 0.5 \
+                    and abs(x - mid) < half + 2:
+                hard += 1
+    # A wire entering an op-amp triangle anywhere but its three pins.
+    # The pin connections on the two faces, and the output rising from
+    # the tip, are how the symbol is wired and are not faults.
+    m = 4.0
+    for ox0, oy0, ox1, oy1 in cv.obstacles:
+        bx0, by0, bx1, by1 = ox0 - m, oy0 - m, ox1 + m, oy1 + m
+        for x1, y1, x2, y2 in cv.wires:
+            if abs(y1 - y2) < _EPS:
+                if not (by0 < y1 < by1 and x1 < bx1 and x2 > bx0):
+                    continue
+                if abs(x2 - ox0) < 1 or abs(x1 - ox1) < 1:
+                    continue
+                if abs(x1 - ox0) < 1 or abs(x2 - ox1) < 1:
+                    continue
+                hard += 1
+            elif bx0 < x1 < bx1 and y1 < by1 and y2 > by0:
+                tipy = (oy0 + oy1) / 2.0
+                if abs(x1 - ox1) < 1 and abs(max(y1, y2) - tipy) < 1:
+                    continue
+                hard += 1
+    # An *element* inside a body, or crossing one. A different fault
+    # from a wire doing it, and the one #372's guard was widened for:
+    # a line can cross a body without its midpoint being inside it, and
+    # a horizontal segment has zero height, so an "overlap on both axes"
+    # test reports nothing until the segment is given its thickness.
+    for bx0, by0, bx1, by1 in cv.obstacles:
+        for sx1, sy1, sx2, sy2, half in cv.esegs:
+            if half <= 0:
+                continue
+            mx, my = (sx1 + sx2) / 2.0, (sy1 + sy2) / 2.0
+            if bx0 + 1 < mx < bx1 - 1 and by0 + 1 < my < by1 - 1:
+                hard += 1
+                continue
+            lox, hix = min(sx1, sx2) - half, max(sx1, sx2) + half
+            loy, hiy = min(sy1, sy2) - half, max(sy1, sy2) + half
+            if min(hix, bx1) - max(lox, bx0) > 1 \
+                    and min(hiy, by1) - max(loy, by0) > 1:
+                hard += 1
+    return hard, soft
+
+
+def _tighten_gaps(elements: List[Element], marks, choice,
+                  row_h: Optional[float]) -> Optional[List[float]]:
+    """How wide each column gap needs to be for *this* drawing.
+
+    `px(col)` was `MARGIN + col * COL_W`, so every gap was 132px whether
+    it carried a stretched resistor with a two-line label or nothing but
+    a wire. Measured over the book, **the median gap has 95px of air in
+    it** and 881 of 919 gaps carry nothing wider than 60px. That is the
+    horizontal half of Roberto's balloon, and the half his rule 5 --
+    *keep as small a relative figure size compared to the size of the
+    elements* -- is mostly about.
+
+    The rule is deliberately conservative, because two labels in
+    neighbouring gaps are the thing that breaks when a drawing narrows:
+
+      * a gap is sized by the **full width** of the widest object whose
+        x-extent touches it, not by the part that lies inside it. An
+        object centred in the gap then keeps `H_CLEAR` to the columns
+        either side, and two objects half-overhanging from opposite
+        columns still clear each other by `H_CLEAR`, since the gap is at
+        least twice either half-width plus the clearance.
+      * a gap is **never wider than `COL_W`**. A drawing can only
+        narrow, so nothing that fits today can stop fitting.
+
+    Labels count, not just symbols. A measurement that looks only at
+    bodies measures half the picture and it is the labels that collide
+    -- the same distinction that cost #212 three rounds."""
+    probe: dict = {}
+    _render_once(elements, marks, choice[0], choice[1],
+                 row_h=row_h, out=probe)
+    lay, cv = probe["lay"], probe["cv"]
+    cols = set(lay.node_col.values()) | set(lay.elem_col.values())
+    if len(cols) < 2:
+        return None
+    top = max(cols)
+    budget = _collisions(cv)
+    boxes = list(cv.inks) + list(cv.labels) + list(cv.obstacles)
+    gaps = []
+    for c in range(top):
+        lo, hi = lay.px(c), lay.px(c + 1)
+        need = 0.0
+        for x0, _y0, x1, _y1 in boxes:
+            if x1 <= lo + 0.5 or x0 >= hi - 0.5:
+                continue
+            need = max(need, x1 - x0)
+        gaps.append(min(COL_W, max(COL_W_MIN, need + 2 * H_CLEAR)))
+
+    # The estimate above sizes a gap by the *widest* thing in it, and
+    # two things at the same height need the sum of their widths, not
+    # the larger. Rather than model that -- the labels are drawn by a
+    # dozen different call sites, each with its own offsets -- draw it
+    # and look, then let the gaps that are still too tight push back
+    # out. Springs settling, in the one dimension the drawing has.
+    #
+    # It stops when the narrowed drawing is no worse than the full-width
+    # one, so a fault that is already in the book at 132px is not a
+    # reason to refuse to narrow. Monotone and capped, so the worst case
+    # is the uniform COL_W it started from.
+    for _ in range(8):
+        step: dict = {}
+        _render_once(elements, marks, choice[0], choice[1],
+                     row_h=row_h, gaps=gaps, out=step)
+        h, sf = _collisions(step["cv"])
+        if h <= budget[0] and sf <= budget[1]:
+            break
+        wide = [min(COL_W, g + 18.0) for g in gaps]
+        if wide == gaps:
+            return None                  # back at COL_W and still bad
+        gaps = wide
+    else:
+        return None
+    return gaps if any(g < COL_W - 0.5 for g in gaps) else None
 
 
 def _placements(rows: List[str], ups: List[str]):
@@ -3011,10 +3417,15 @@ def _placements(rows: List[str], ups: List[str]):
 
 def _render_once(elements: List[Element], marks=None,
                  allow_raise: Optional[set] = None,
-                 allow_above: Optional[set] = None) -> str:
+                 allow_above: Optional[set] = None,
+                 row_h: Optional[float] = None,
+                 gaps: Optional[List[float]] = None,
+                 out: Optional[dict] = None) -> str:
     lay = _Layout(elements, allow_raise=allow_raise,
-                  allow_above=allow_above)
+                  allow_above=allow_above, row_h=row_h, gaps=gaps)
     cv = _Canvas()
+    if out is not None:
+        out["lay"], out["cv"] = lay, cv
     y_top, y_bot = lay.y_top, lay.y_bot
     # Oriented segment per element, n1 end first: the coupling dots need
     # to know which way round each coil was actually drawn.
@@ -3193,7 +3604,7 @@ def _render_once(elements: List[Element], marks=None,
         # top block's ground symbols.
         y_foot = y_bot
         if lay.max_block_lane:
-            y_foot = y_top + ROW_H
+            y_foot = y_top + lay.row_h
             cv.wire(x, y_foot, x, y_bot)
         if e.n1 == "0":
             segs[e.name] = (x, y_foot, x, y_top)
