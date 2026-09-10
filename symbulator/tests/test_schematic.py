@@ -728,3 +728,45 @@ def test_a_reversed_transformer_says_it_once():
             r'<circle cx="[-\d.]+" cy="([-\d.]+)" r="3.4"', svg)
         heights = {round(float(y)) for y in dots if round(float(y)) != y_bot}
         assert len(heights) == levels, (desc, sorted(heights))
+
+
+def test_nothing_hangs_inside_a_four_terminal_block():
+    """A two-port or transformer box fills the band between the node row
+    and the ground rail, so an element hanging from one of its own top
+    nodes must be bumped out of the columns the box spans.
+
+    It was not, until 10 Sep 2026. Thesis Problem 040 -- a source and a
+    resistor both to ground on the block's left node -- drew the 50 ohm
+    resistor *inside* the box, its label across the block's own
+    parameter list. The op-amp had been registered as a span that
+    grounded elements are bumped out of, and the four-terminal block,
+    which occupies the band for the same reason, had not.
+
+    Each symbol is placed by a `translate`, and the box is the one
+    `<rect>`, so a symbol whose origin falls within the rectangle is an
+    element drawn inside the block. Checking the path data instead does
+    not work and quietly passes: the vertices are in the symbol's own
+    local coordinates, so they never fall in the rectangle's absolute
+    ones."""
+    rect_re = re.compile(r'<rect x="([-\d.]+)" y="([-\d.]+)" '
+                         r'width="([\d.]+)" height="([\d.]+)"')
+    place_re = re.compile(r'<g transform="translate\(([-\d.]+),([-\d.]+)\)')
+    cases = [
+        # the thesis's own Problem 040
+        "j1,0,1,is:r1,1,0,50:zp,1,2,[20,3,100,5]:r2,2,0,100",
+        # the same shape hanging off the right-hand node
+        "j1,0,1,is:zp,1,2,[20,3,100,5]:r2,2,0,100:r3,2,0,25",
+        # and with a transformer in place of the two-port
+        "e1,1,0,10:r1,1,0,5:t,1,2,1,2:r2,2,0,8",
+    ]
+    for desc in cases:
+        svg = to_svg(desc)
+        m = rect_re.search(svg)
+        if m is None:
+            continue                      # no box drawn for this shape
+        x0, y0 = float(m.group(1)), float(m.group(2))
+        x1, y1 = x0 + float(m.group(3)), y0 + float(m.group(4))
+        inside = [(float(a), float(b)) for a, b in place_re.findall(svg)
+                  if x0 + 1 < float(a) < x1 - 1 and y0 + 1 < float(b) < y1 - 1]
+        assert not inside, (
+            "a symbol is placed inside the block for %r: %r" % (desc, inside))

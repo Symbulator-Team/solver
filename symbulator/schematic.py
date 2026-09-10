@@ -1857,17 +1857,36 @@ class _Layout:
                  if n not in self.captured]
         idx = {n: i for i, n in enumerate(order)}
 
-        # The columns an op-amp occupies, in node-order index space. A
-        # grounded element hanging inside one of these spans would be
-        # drawn straight through the triangle or its wires -- the band
-        # between the node row and the rail is exactly where the op-amp
-        # sits -- so such elements are bumped out to a column of their
-        # own: before the span when they hang off the inverting-input
-        # end (a driving source belongs on the left), after it
-        # otherwise (a load belongs on the right).
+        # The columns a body-in-the-band element occupies, in node-order
+        # index space. A grounded element hanging inside one of these
+        # spans would be drawn straight through the body or its wires --
+        # the band between the node row and the rail is exactly where
+        # such an element sits -- so it is bumped out to a column of its
+        # own: before the span when it hangs off the left end (a driving
+        # source belongs on the left), after it otherwise (a load
+        # belongs on the right).
+        #
+        # Two kinds sit in the band, and for the same reason, but only
+        # the op-amp was ever registered here. A four-terminal block --
+        # a two-port or a transformer -- fills the band too, and a
+        # resistor hanging from one of its own top nodes landed *inside*
+        # the box: thesis Problem 040 drew its 50 ohm r1 within the
+        # two-port, label over the block's own parameter list. The
+        # spacer logic further down gives the block clear columns
+        # between its nodes, but an `extra` column for a second grounded
+        # element is inserted before that spacer and lands in the box.
+        # Registering the block as a span is the whole fix; the bumping
+        # machinery already does the right thing with it.
         spans_idx: List[Tuple[int, int]] = []
         for e in self.opamps:
             a, b = idx.get(_op_up(e)), idx.get(e.fields[2])
+            if a is not None and b is not None:
+                spans_idx.append((min(a, b), max(a, b)))
+        for e in self.spanning:
+            if e.kind not in PORT_BLOCK and e.kind != "t":
+                continue
+            tl, tr = _port_tops(e)
+            a, b = idx.get(tl), idx.get(tr)
             if a is not None and b is not None:
                 spans_idx.append((min(a, b), max(a, b)))
 
