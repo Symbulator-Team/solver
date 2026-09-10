@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.6.4 -- 10 Sep 2026 (#367-#369: the op-amp drawings, chosen by cost rather than by rule)
+
+### Changed
+- **A drawing with a choice is now drawn every way and the cheapest kept
+  (#367).** The only choice the drawer has is where each op-amp stands,
+  and a hand-written predicate for it got AS2's Practice Problem 5.9
+  wrong in both directions over most of a day. `_cost` prices a finished
+  drawing -- crossings, then bends, then wires, compared in that order,
+  because "every bend costs money, and every cross costs a lot of money"
+  (Roberto Perez-Franco, 10 Sep 2026) -- and `_render` keeps the best.
+  Over the example book it agrees with every layout he has ruled on.
+
+  The winner is drawn again at the end so that it is the last thing on
+  the canvas: the review harness and the editable-drawing exporter both
+  read the canvas by hooking `_flush_wires`, and a hook sees the last
+  pass, not the returned one.
+
+- **A follower claims a column of its own (#367).** An op-amp whose
+  output *is* one of its inputs, `o1,1,2,2`, names one node twice, so it
+  spanned no columns and the ordering had nowhere to put its body -- the
+  symbol is drawn to the right of that column regardless, and landed in
+  the gap the next stage occupies. Practice Problem 5.9 drew its two
+  triangles 35px into each other.
+
+- **A lead leaves toward its destination (#369).** An op-amp's lower
+  input always exited 30px to the *left* of its input column, whatever
+  side its node was on. Where the node lies right, that walked past the
+  previous stage and turned back across all of it: 137px the wrong way
+  and 396px back in Practice Problem 5.9, and both of that drawing's
+  crossings were on the westward leg.
+
+- **A body stands at the output end of a stretched span (#369).** The
+  triangle was centred between its input and output columns, which is
+  right for a one-column span and wrong for one widened by a spacer:
+  it left 107px of bare output lead and parked the body against its
+  neighbour, leaving 31px for two verticals that then ran 3px apart.
+
+- **A third place to stand: above the node row (#369).** When an
+  op-amp's own feedback resistor occupies its span on the row, the row
+  is not available -- but the strip above it is, and from there all
+  three connections are short drops. Offered as an option and priced
+  like the others. The input whose node lies further right takes the
+  upper pin, so the symbol comes out with `+` uppermost; that is a
+  consequence of which lead has room, not a rule.
+
+### Fixed
+- **An above-row body no longer stands in a lifted element's row
+  (#369).** The strip above the node row is not empty: a stacked element
+  sits one `stack_h` up per level, and Bo2's Drill Exercise 3.4 drew
+  `r1` straight through the body. The placement now demands its strip be
+  clear, the same question `_raise_ok` asks of the node row.
+
+- **A lead routed past a body clears the body's *name* (#369).** Since
+  #338 an op-amp's name is set against its own hypotenuse, so it already
+  stands above the top vertex; a lead 12px over the vertex passed 1.6px
+  over the name, in every drawing that stands a body above the row.
+
+- **An element inside a four-terminal block is caught wherever it sits
+  (#366).** `spans_idx` now registers two-ports and transformers, so a
+  grounded element hanging off one of their own top nodes is bumped to a
+  column of its own instead of landing inside the box.
+
 ## 0.6.3 -- 9 Sep 2026 (#344: an island's reference is zero everywhere, including in the answers derived from it)
 
 ### Fixed
