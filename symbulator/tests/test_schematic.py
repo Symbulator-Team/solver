@@ -817,3 +817,38 @@ def test_a_captured_source_keeps_its_stage_as_drawn():
         ys.setdefault(m.group(2), float(m.group(1)))
     assert ys.get("o", 1e9) < ys.get("3", -1e9), (
         "the output should precede the divider node here: %r" % ys)
+
+
+def test_the_feedback_divider_admits_a_parallel_pair_but_not_a_grounded_input():
+    """The divider predicate, at both its edges.
+
+    Widened on 10 Sep 2026 so the feedback side may be several elements
+    in parallel -- AS7's Problem 10.77 puts a resistor and a capacitor
+    across it, and a strict one-each test rejected it, leaving the
+    drawing with the divider node and the output sharing a row wire.
+
+    Gated at the same time on the *other* input being ground: that is a
+    plain inverting stage, whose summing node is the input side and
+    belongs first, with its input resistor to the left of the triangle.
+    Reordering there dragged the resistor across to the right (Bo2's
+    Example 5.5 and Drill Exercise 5.5)."""
+    # 10.77: r3 to ground, r2 and cb both to the output -> reordered,
+    # so the output node precedes the divider node
+    svg = to_svg("e,1,0,vs:r1,1,2,r1:ca,2,0,ca:r3,0,3,r3:"
+                 "o,2,3,o:cb,3,o,cb:r2,3,o,r2")
+    pos = {}
+    for m in re.finditer(r'<text[^>]*x="([-\d.]+)"[^>]*>(?:<[^>]*>)*'
+                         r'([3o])(?:</tspan>)?</text>', svg):
+        pos.setdefault(m.group(2), float(m.group(1)))
+    assert pos.get("o", 1e9) < pos.get("3", -1e9), (
+        "the output should precede the divider node: %r" % pos)
+
+    # `o,0,1,o` -- the other input is ground, so the summing node keeps
+    # its place and its input resistor stays left of the triangle
+    inv = to_svg("r2,0,1,2:r5,1,o,5:c,1,o,1/20,10:o,0,1,o")
+    ipos = {}
+    for m in re.finditer(r'<text[^>]*x="([-\d.]+)"[^>]*>(?:<[^>]*>)*'
+                         r'([1o])(?:</tspan>)?</text>', inv):
+        ipos.setdefault(m.group(2), float(m.group(1)))
+    assert ipos.get("1", 1e9) < ipos.get("o", -1e9), (
+        "the summing node should precede the output here: %r" % ipos)

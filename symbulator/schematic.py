@@ -1735,14 +1735,18 @@ def _node_order(elements: List[Element]) -> List[str]:
         for dn in (e.fields[1], e.fields[0]):
             if dn == "0" or dn not in order or nout not in order:
                 continue
-            users = [u for u in elements if u.kind != "o" and dn in u.nodes]
-            if len(users) != 2:
-                continue
-            if sum(1 for u in users if nout in u.nodes) != 1:
-                continue
-            if sum(1 for u in users if "0" in u.nodes) != 1:
+            if not _is_feedback_divider(elements, e, dn):
                 continue
             other = e.fields[0] if dn == e.fields[1] else e.fields[1]
+            # ...nor when the other input is ground. That is a plain
+            # inverting stage: the summing node is the *input* side and
+            # belongs first, with its input resistor to the left of the
+            # triangle, which is where the drawing already put it.
+            # Reordering drags that resistor across to the right --
+            # Bo2's Example 5.5 and Drill Exercise 5.5 (`o,0,1,o`),
+            # 10 Sep 2026.
+            if other == "0":
+                continue
             ous = [u for u in elements if u.kind != "o" and other in u.nodes]
             if (len(ous) == 1 and ous[0].kind in ("e", "j")
                     and "0" in (ous[0].n1, ous[0].n2)):
@@ -1811,6 +1815,30 @@ def _op_up(e: Element) -> str:
 def _up_of(lay: "_Layout", e: Element) -> str:
     """The input this op-amp is *drawn* with wired to the node row."""
     return lay.op_up.get(e.name) or _op_up(e)
+
+
+def _is_feedback_divider(elements: List[Element], op: Element,
+                         dn: str) -> bool:
+    """Does `dn` -- an op-amp input -- carry nothing but a divider
+    between the output node and ground?
+
+    Every element on the node must go to one or the other, with at least
+    one of each. The feedback side may be **several elements in
+    parallel**: AS7's Problem 10.77 puts a resistor and a capacitor
+    across it, which a strict pair test rejected, so its drawing kept the
+    layout this predicate exists to fix (Roberto, 10 Sep 2026).
+    """
+    if dn == "0":
+        return False
+    nout = op.fields[2]
+    users = [u for u in elements if u.kind != "o" and dn in u.nodes]
+    if not users:
+        return False
+    to_out = [u for u in users if nout in u.nodes]
+    to_gnd = [u for u in users if "0" in u.nodes]
+    if not to_out or not to_gnd:
+        return False
+    return len(to_out) + len(to_gnd) == len(users)
 
 
 def _op_under(lay: "_Layout", e: Element) -> bool:
@@ -1919,12 +1947,7 @@ class _Layout:
 
         for e in self.opamps:
             for dn in (e.fields[1], e.fields[0]):
-                if dn == "0":
-                    continue
-                us = [u for u in elements if u.kind != "o" and dn in u.nodes]
-                if (len(us) == 2
-                        and sum(1 for u in us if e.fields[2] in u.nodes) == 1
-                        and sum(1 for u in us if "0" in u.nodes) == 1):
+                if _is_feedback_divider(elements, e, dn):
                     self.op_divider.add(e.name)
 
         _prov = {n: i for i, n in enumerate(_node_order(elements))}
@@ -2352,6 +2375,27 @@ class _Layout:
             return rc
         return lc if (nc - lo) <= (hi - nc) else rc
 
+    def raised(self, e: Element) -> bool:
+        """Is this op-amp drawn with its output tip **on** the node row?
+
+        Three conditions, each measured (see `_draw_opamp`): the
+        feedback-divider shape, the orientation flipped, and the stretch
+        of row it would occupy clear. Lives here rather than in the
+        drawing because the node names have to know it too -- a raised
+        op-amp's input runs *above* the row, through the strip the names
+        are lettered in, so those names move aside (#367)."""
+        if e.name not in self.op_divider or e.name not in self.op_up:
+            return False
+        a = self.node_col.get(_up_of(self, e))
+        b = self.node_col.get(e.fields[2])
+        if a is None or b is None:
+            return False
+        return all(self.gap_free(c) for c in range(min(a, b), max(a, b)))
+
+    def raised_input_nodes(self) -> set:
+        """The row-row nodes whose name a raised op-amp's input passes."""
+        return {_up_of(self, e) for e in self.opamps if self.raised(e)}
+
     def gap_free(self, c: int) -> bool:
         """True when the node row between column c and column c+1
         carries nothing -- no element, no stub -- so a wire may run
@@ -2436,26 +2480,14 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # Only that shape. Raising every op-amp lifts the triangle above the
     # node row, where the row is generally occupied, and takes the review
     # harness from 3 findings to 57.
-    # ...and only where the node row above the triangle is clear. Bo2's
-    # Example 3.1 runs its feedback back along that row, so raising the
-    # op-amp into it drives the wire through the body; eight of the
-    # book's drawings do the same. The stretch has to be its own.
-    _in_col = lay.node_col.get(up_node)
-    _out_col = lay.node_col.get(n_out)
-    _clear = (_in_col is not None and _out_col is not None
-              and all(lay.gap_free(c)
-                      for c in range(min(_in_col, _out_col),
-                                     max(_in_col, _out_col))))
-    # ...and only where the orientation was flipped as well. Raising an
-    # op-amp that was already drawn the right way round moves it for no
-    # gain: on 10 Sep 2026 it disturbed seven drawings Roberto called
-    # perfect (AS2's Example 5.2 and Figure 5.16, PP 5.4a, Bo2's Drill
-    # Exercise 3.11 and Example 3.1, TR5's Example 4-13 right half and
-    # Example 4-17) -- every one of them raised, none of them flipped.
-    # The raise pays only when the flip has already moved the output and
-    # the divider node into reading order.
-    if e.name in lay.op_divider and e.name in lay.op_up and _clear:
-        mid = lay.y_top + h_tri / 2.0 + lane * OP_LANE_H
+    # The tip goes **on** the node row, so the output runs straight out
+    # through its node and into the feedback resistor -- "perfectly in
+    # line with the resistor and the joining point behind it" (Roberto,
+    # 10 Sep 2026). The symbol puts its output at the triangle's centre
+    # and the inputs 14.5px off it, so only one of the two can be on the
+    # row; the output side is the one that reads as a line.
+    if lay.raised(e):
+        mid = lay.y_top + lane * OP_LANE_H
     else:
         mid = lay.y_top + ROW_H / 2.0 + lane * OP_LANE_H
     # The triangle is a fixed equilateral symbol, centred in the gap
@@ -2915,9 +2947,18 @@ def _render(elements: List[Element], marks=None) -> str:
     # 6. node names, tucked just above the row -- clear of the wire by
     #    GAP like everything else. A node can be called `ag` or `bg`
     #    (the three-phase books do), and those hang below the baseline.
+    # A raised op-amp's input leaves its node *above* the row -- which
+    # is the strip these names are lettered in -- and runs right to the
+    # triangle. Those names go to the left of their dot instead; every
+    # other name keeps its place (#367).
+    _raised_in = lay.raised_input_nodes()
     for n, col in lay.node_col.items():
-        cv.text(lay.px(col) + 6,
-                y_top - _HALF - GAP - LABEL_DESCENT, n, "start")
+        if n in _raised_in:
+            cv.text(lay.px(col) - 6,
+                    y_top - _HALF - GAP - LABEL_DESCENT, n, "end")
+        else:
+            cv.text(lay.px(col) + 6,
+                    y_top - _HALF - GAP - LABEL_DESCENT, n, "start")
 
     # 7. the caption block, below the drawing: values too long to
     #    letter at their element (the element keeps its name, see
