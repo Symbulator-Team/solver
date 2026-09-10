@@ -1709,6 +1709,55 @@ def _node_order(elements: List[Element]) -> List[str]:
                 order.remove(node)
                 at = order.index(left) if side == "L" else order.index(right) + 1
                 order.insert(at, node)
+
+    # A feedback divider reads output-first. When an op-amp's routed
+    # input carries exactly a pair -- one element back to the output
+    # node, one down to ground -- put the **output node before that
+    # input**, so the feedback element runs left to right from the
+    # output to the divider node and sits in the row between them.
+    #
+    # Ordered the other way (which is what the walk produces, the
+    # inverting input being linked to the output and reached first) the
+    # same element spans two adjacent columns backwards and is drawn
+    # arcing *over* the node row, with the divider node and the output
+    # sharing a row wire -- so the grounded half of the divider looks
+    # like it hangs off the output, and the inverting input has nowhere
+    # to return but a rectangle under the body.
+    #
+    # Roberto, 10 Sep 2026, having redrawn AS2's Practice Problem 5.5 by
+    # hand: *"the trick was flipping the resistor."* It is the whole fix
+    # for the non-inverting stage, and it is an ordering question, not a
+    # routing one.
+    for e in elements:
+        if e.kind != "o":
+            continue
+        nout = e.fields[2]
+        for dn in (e.fields[1], e.fields[0]):
+            if dn == "0" or dn not in order or nout not in order:
+                continue
+            users = [u for u in elements if u.kind != "o" and dn in u.nodes]
+            if len(users) != 2:
+                continue
+            if sum(1 for u in users if nout in u.nodes) != 1:
+                continue
+            if sum(1 for u in users if "0" in u.nodes) != 1:
+                continue
+            other = e.fields[0] if dn == e.fields[1] else e.fields[1]
+            ous = [u for u in elements if u.kind != "o" and other in u.nodes]
+            if (len(ous) == 1 and ous[0].kind in ("e", "j")
+                    and "0" in (ous[0].n1, ous[0].n2)):
+                continue
+            # ...but not when the *other* input carries a lone grounded
+            # source. That is the classic non-inverting stage, whose
+            # source is drawn under the triangle by the capture pass and
+            # whose layout is already the textbook one -- swapping there
+            # moves a drawing that was right. Seven of the book's, on
+            # 10 Sep 2026: AS2's Example 5.2 and Figure 5.16, Bo2's
+            # Example 3.1, TR5's Example 4-17 and kin.
+
+            i, j = order.index(dn), order.index(nout)
+            if i < j:
+                order[i], order[j] = order[j], order[i]
     return order
 
 
@@ -1746,8 +1795,22 @@ def _op_up(e: Element) -> str:
     input normally, but the non-inverting one when the inverting input
     is ground -- `o,1,0,o` is written that way round, and treating "0"
     as a column would run the input riser through whatever hangs on
-    the leftmost column."""
+    the leftmost column.
+
+    **This is the ordering answer, and `_Layout.op_up` is the drawing
+    one.** The function has two jobs: `_node_order` walks
+    `_op_up -> output` before any resistor edge, which is what makes a
+    cascade come out left to right, and the layout uses it to decide
+    which input is wired to the row. Changing it to suit the drawing
+    breaks the ordering -- tried on 10 Sep 2026, and both op-amps of a
+    cascade landed in the same column. So the drawing gets its own
+    decision, taken once the columns are known; see `_Layout.op_up`."""
     return e.fields[1] if e.fields[1] != "0" else e.fields[0]
+
+
+def _up_of(lay: "_Layout", e: Element) -> str:
+    """The input this op-amp is *drawn* with wired to the node row."""
+    return lay.op_up.get(e.name) or _op_up(e)
 
 
 def _op_under(lay: "_Layout", e: Element) -> bool:
@@ -1765,7 +1828,7 @@ def _op_under(lay: "_Layout", e: Element) -> bool:
     and by the drawing itself, so it lives outside both."""
     if lay.op_src.get(e.name) is not None:
         return False
-    up = _op_up(e)
+    up = _up_of(lay, e)
     flip = up != e.fields[1]
     dn = e.fields[1] if flip else e.fields[0]
     if dn == "0" or dn not in lay.node_col or up not in lay.node_col:
@@ -1791,6 +1854,12 @@ class _Layout:
         self.grounded: List[Element] = []
         self.spanning: List[Element] = []
         self.opamps: List[Element] = []
+        self.op_up: Dict[str, str] = {}
+        #: op-amps whose routed input carries a feedback divider -- one
+        #: element back to the output node, one down to ground. The same
+        #: shape `_node_order` puts the output before, and the only one
+        #: drawn with its row-wired pin on the node row.
+        self.op_divider: set = set()
         self.mutuals: List[Element] = []
 
         for e in elements:
@@ -1804,6 +1873,73 @@ class _Layout:
                 self.grounded.append(e)
             else:
                 self.spanning.append(e)
+
+        # Which input each op-amp is *drawn* with wired to the node row.
+        # Decided here, before the capture below and before `_assign`,
+        # because both have to agree with it: capture looks at whatever
+        # ends up being the *lower* input, and getting that from the old
+        # orientation while the drawing used the new one left the source
+        # uncaptured and pushed out to a column -- eight of the book's
+        # op-amp drawings, 10 Sep 2026.
+        #
+        # `_op_up` stays the ordering answer (it feeds `_node_order`,
+        # which is what makes a cascade come out left to right, and
+        # changing it there put two op-amps in one column). This is the
+        # drawing answer, and it can differ because the provisional order
+        # already tells us which input lies left.
+        #
+        # Wire the **leftmost** input to the row, so the other is to the
+        # right and `_op_under` takes it down-and-right under the body --
+        # the route with no crossings. The alternative is a lane 16px
+        # under the node row, which runs the whole width back across
+        # whatever hangs between (thesis Problem 081). Lowering that lane
+        # only moves the damage: the riser back up to the node then runs
+        # the length of whatever hangs on it. 16px is short on purpose.
+        # The capture below outranks the position rule. When the lower
+        # input already carries a lone grounded source, the orientation
+        # that puts it there is the one a textbook draws, and flipping
+        # loses the capture and pushes the source out to a column --
+        # which is what broke the classic non-inverting stage on the
+        # first attempt at this.
+        _users: Dict[str, List[Element]] = {}
+        for e in elements:
+            if e.kind == "m":
+                continue
+            for n in set(e.fields[:3] if e.kind == "o" else e.nodes):
+                if n != "0":
+                    _users.setdefault(n, []).append(e)
+
+        def _captures(op, low):
+            """Would `low` as the lower input give a source to capture?"""
+            if low == "0":
+                return False
+            us = _users.get(low, [])
+            return len(us) == 2 and op in us and any(
+                u.kind in ("e", "j") and "0" in (u.n1, u.n2) for u in us)
+
+        for e in self.opamps:
+            for dn in (e.fields[1], e.fields[0]):
+                if dn == "0":
+                    continue
+                us = [u for u in elements if u.kind != "o" and dn in u.nodes]
+                if (len(us) == 2
+                        and sum(1 for u in us if e.fields[2] in u.nodes) == 1
+                        and sum(1 for u in us if "0" in u.nodes) == 1):
+                    self.op_divider.add(e.name)
+
+        _prov = {n: i for i, n in enumerate(_node_order(elements))}
+        self.op_up = {}
+        for e in self.opamps:
+            up = _op_up(e)
+            dn = e.fields[0] if up == e.fields[1] else e.fields[1]
+            if dn == "0":
+                continue
+            if _captures(e, dn):
+                continue                    # the default already draws it
+            a, b = _prov.get(up), _prov.get(dn)
+            if _captures(e, up) or (a is not None and b is not None
+                                    and b < a):
+                self.op_up[e.name] = dn
 
         # A non-inverting stage's driving source -- a grounded e/j that
         # is the *only* thing on the op-amp's lower input -- is drawn in
@@ -1822,11 +1958,13 @@ class _Layout:
                 if n != "0":
                     usage.setdefault(n, []).append(e)
         for op in self.opamps:
-            # The input routed downward: n+ normally; when the pins are
-            # flipped because n- is ground (see _op_up), the downward
-            # input *is* ground and there is nothing to capture.
-            dn = op.fields[0] if op.fields[1] != "0" else "0"
-            if dn == "0" or dn == _op_up(op):
+            # The input routed downward -- read off the orientation the
+            # drawing will actually use, not the ordering one. When the
+            # pins are flipped because n- is ground the downward input
+            # *is* ground and there is nothing to capture.
+            up = _up_of(self, op)
+            dn = op.fields[0] if up == op.fields[1] else op.fields[1]
+            if dn == "0" or dn == up:
                 continue
             users = usage.get(dn, [])
             if len(users) != 2 or op not in users:
@@ -1857,6 +1995,7 @@ class _Layout:
                  if n not in self.captured]
         idx = {n: i for i, n in enumerate(order)}
 
+
         # The columns a body-in-the-band element occupies, in node-order
         # index space. A grounded element hanging inside one of these
         # spans would be drawn straight through the body or its wires --
@@ -1879,7 +2018,7 @@ class _Layout:
         # machinery already does the right thing with it.
         spans_idx: List[Tuple[int, int]] = []
         for e in self.opamps:
-            a, b = idx.get(_op_up(e)), idx.get(e.fields[2])
+            a, b = idx.get(_up_of(self, e)), idx.get(e.fields[2])
             if a is not None and b is not None:
                 spans_idx.append((min(a, b), max(a, b)))
         for e in self.spanning:
@@ -2114,7 +2253,7 @@ class _Layout:
         for c in self.elem_col.values():
             placed.append((c, c, 0))
         for e in self.opamps:
-            for n in (_op_up(e), e.fields[2]):
+            for n in (_up_of(self, e), e.fields[2]):
                 c = self.node_col.get(n)
                 if c is not None:
                     placed.append((c, c, 0))
@@ -2138,7 +2277,7 @@ class _Layout:
         # throughout, since each stage owns its own columns.
         ops = []
         for e in self.opamps:
-            a = self.node_col.get(_op_up(e))
+            a = self.node_col.get(_up_of(self, e))
             b = self.node_col.get(e.fields[2])
             if a is not None and b is not None:
                 ops.append((min(a, b), max(a, b), e))
@@ -2277,7 +2416,7 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     pins swap: the non-inverting input takes the upper position and
     its node's column, and the inverting one drops to the rail."""
     n_out = e.fields[2]
-    up_node = _op_up(e)                             # wired to the top row
+    up_node = _up_of(lay, e)                        # wired to the top row
     flip = up_node != e.fields[1]                   # n- grounded, pins swap
     dn_node = e.fields[1] if flip else e.fields[0]  # rail, or its own row
     up_sign, dn_sign = ("+", "−") if flip else ("−", "+")
@@ -2287,12 +2426,43 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         else x_in + COL_W
 
     lane = lay.op_lane.get(e.name, 0)
-    mid = lay.y_top + ROW_H / 2.0 + lane * OP_LANE_H
+    h_tri = 58.0
+    # A non-inverting stage -- row-wired input, feedback divider on the
+    # routed one -- is drawn with its row-wired pin *on* the node row, so
+    # the input runs straight in and the output straight out. Roberto,
+    # 10 Sep 2026: raise it and "you will avoid the two bends in the
+    # lines around the op amp."
+    #
+    # Only that shape. Raising every op-amp lifts the triangle above the
+    # node row, where the row is generally occupied, and takes the review
+    # harness from 3 findings to 57.
+    # ...and only where the node row above the triangle is clear. Bo2's
+    # Example 3.1 runs its feedback back along that row, so raising the
+    # op-amp into it drives the wire through the body; eight of the
+    # book's drawings do the same. The stretch has to be its own.
+    _in_col = lay.node_col.get(up_node)
+    _out_col = lay.node_col.get(n_out)
+    _clear = (_in_col is not None and _out_col is not None
+              and all(lay.gap_free(c)
+                      for c in range(min(_in_col, _out_col),
+                                     max(_in_col, _out_col))))
+    # ...and only where the orientation was flipped as well. Raising an
+    # op-amp that was already drawn the right way round moves it for no
+    # gain: on 10 Sep 2026 it disturbed seven drawings Roberto called
+    # perfect (AS2's Example 5.2 and Figure 5.16, PP 5.4a, Bo2's Drill
+    # Exercise 3.11 and Example 3.1, TR5's Example 4-13 right half and
+    # Example 4-17) -- every one of them raised, none of them flipped.
+    # The raise pays only when the flip has already moved the output and
+    # the divider node into reading order.
+    if e.name in lay.op_divider and e.name in lay.op_up and _clear:
+        mid = lay.y_top + h_tri / 2.0 + lane * OP_LANE_H
+    else:
+        mid = lay.y_top + ROW_H / 2.0 + lane * OP_LANE_H
     # The triangle is a fixed equilateral symbol, centred in the gap
     # between the input and output columns. Widening it to span whatever
     # gap it happens to sit in would be the easy way to make the wires
     # meet, but it distorts the symbol; the leads stretch instead.
-    h = 58.0
+    h = h_tri
     w = h * 3 ** 0.5 / 2.0
     tx = max((x_in + x_out) / 2.0 - w / 2.0, x_in + 26)
     y_minus, y_plus = mid - h / 4.0, mid + h / 4.0
@@ -2343,7 +2513,7 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # When several op-amps hang off one input node they share that
     # vertical wire, so the branch to this one is a T-junction and needs
     # a dot -- but only if another op-amp continues on past it.
-    if any(o.name != e.name and _op_up(o) == up_node
+    if any(o.name != e.name and _up_of(lay, o) == up_node
            and lay.op_lane.get(o.name, 0) > lane for o in lay.opamps):
         cv.dot(x_in, y_minus)
     # lower input: out to the left, then down to the rail (or up to its

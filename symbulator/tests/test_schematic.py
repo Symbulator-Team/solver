@@ -212,14 +212,25 @@ def test_short_values_stay_at_the_element():
 # --- crossings and junctions -------------------------------------------
 
 def test_unconnected_crossings_are_drawn_as_hops():
-    """Two op-amp stages that force a wire past another wire must mark
-    the crossing with the semicircular no-connection hop (an arc in the
-    path data), never a bare X crossing."""
-    svg = to_svg("e,1,0,vs:r1,1,2,rr1:r2,2,0,rr2:o,2,3,o:"
-                 "r3,o,3,rr3:r4,3,0,rr4")
-    # The + input routes from the triangle back to node 2 past the
-    # bumped r4 -- that crossing must carry an arc.
-    assert "A5 5 0 0" in svg
+    """A wire forced past another wire marks the crossing with the
+    semicircular no-connection hop (an arc in the path data), never a
+    bare X crossing.
+
+    The circuit this used to check is the non-inverting stage, which
+    since 10 Sep 2026 has no crossing left to hop: ordering the output
+    before the divider node puts the feedback resistor in the row and
+    the input runs straight in (see `_node_order`). Asserting an arc
+    there asserted the workaround rather than the property, and went red
+    when the workaround stopped being needed. The property is checked on
+    a cascade, which genuinely forces one, and the old circuit now
+    carries the stronger claim: no crossing at all."""
+    forced = to_svg("e,1,0,20'm:o1,1,2,a:o2,a,b,o:ro,o,b,10'k:"
+                    "r4,b,0,4'k:r2,a,2,12'k:r3,2,0,3'k")
+    assert "A5 5 0 0" in forced
+
+    clean = to_svg("e,1,0,vs:r1,1,2,rr1:r2,2,0,rr2:o,2,3,o:"
+                   "r3,o,3,rr3:r4,3,0,rr4")
+    assert "A5 5 0 0" not in clean
 
 
 def test_a_wire_never_crosses_an_element_body():
@@ -770,3 +781,39 @@ def test_nothing_hangs_inside_a_four_terminal_block():
                   if x0 + 1 < float(a) < x1 - 1 and y0 + 1 < float(b) < y1 - 1]
         assert not inside, (
             "a symbol is placed inside the block for %r: %r" % (desc, inside))
+
+
+def test_a_captured_source_keeps_its_stage_as_drawn():
+    """The feedback-divider reordering must not touch a stage whose
+    *other* input carries a lone grounded source.
+
+    That is the classic non-inverting stage: the source is drawn under
+    the triangle by the capture pass and the layout is already the one a
+    textbook prints. Reordering there moves a drawing that was right --
+    it disturbed seven of the book's on 10 Sep 2026 (AS2's Example 5.2
+    and Figure 5.16, Bo2's Example 3.1, TR5's Example 4-17 among them),
+    every one of which Roberto had called perfect.
+
+    Checked on the ordering rather than on pixels: the divider node must
+    still precede the output, which is what leaves the drawing alone."""
+    # AS2's Example 5.2: source alone on n+, divider on n-
+    svg = to_svg("e,2,0,1.:r5,1,0,5'k:r4,1,o,40'k:r2,o,0,20'k:o,2,1,o")
+    # node 1 (the divider node) is drawn left of the output node, i.e.
+    # the order was not swapped; if it had been, `o` would come first.
+    xs = {}
+    for m in re.finditer(r'<text[^>]*x="([-\d.]+)"[^>]*>(?:<[^>]*>)*'
+                         r'([1o])(?:</tspan>)?</text>', svg):
+        xs.setdefault(m.group(2), float(m.group(1)))
+    assert "1" in xs and "o" in xs, xs
+    assert xs["1"] < xs["o"], (
+        "the divider node should still precede the output: %r" % xs)
+
+    # ...while the stage with no capturable source *is* reordered
+    swapped = to_svg("e,1,0,3:r4,1,2,4'k:r8,2,0,8'k:"
+                     "r2,3,0,2'k:r5,3,o,5'k:o,2,3,o")
+    ys = {}
+    for m in re.finditer(r'<text[^>]*x="([-\d.]+)"[^>]*>(?:<[^>]*>)*'
+                         r'([3o])(?:</tspan>)?</text>', swapped):
+        ys.setdefault(m.group(2), float(m.group(1)))
+    assert ys.get("o", 1e9) < ys.get("3", -1e9), (
+        "the output should precede the divider node here: %r" % ys)
