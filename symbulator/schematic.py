@@ -4339,6 +4339,30 @@ def draw(desc: str):
 #   byte-identically. Scoring candidates by crossings and hops rejects
 #   bad pictures but cannot choose the meaningful one -- Example 12.11
 #   scores perfectly as a ladder and still does not read as three-phase.
+# * The rightmost grounded element stays **vertical at the right edge**
+#   rather than lying horizontally in the ground rail. Roberto raised
+#   the idea on 11 Sep 2026 -- "life would be easier if the right-most
+#   resistor was put horizontally along the ground line instead of
+#   vertically at the right edge of the figure ... that would save a
+#   few bends" -- and ruled after seeing it drawn: keep the vertical
+#   version. `tools/schematic_lab/mock_ground.py` renders the two
+#   readings beside a mock of the current drawing that prices
+#   identically to the real one, (0, 4, 20).
+#   What was measured, for whenever it comes up again: **neither
+#   reading saves a bend.** Laying R4 in the rail with node 3 still at
+#   the right edge is 54px narrower and adds a wire; putting node 3 at
+#   the resistor's near end is 123px wider, and it does not remove the
+#   corner it looks like it should -- the return stops climbing to the
+#   node row, but the rail then has to turn up into node 3's drop. One
+#   corner out, one corner in. Roberto called that second reading
+#   "plain wrong". The first he called right in principle, with the
+#   defect that the mock landed the inverting return on the resistor
+#   body instead of on a line.
+#   The one gain the mock could not show: it held the rail's height
+#   fixed, so it could not demonstrate that taking the tallest grounded
+#   element out of the band would let #373 deflate it. On Example 4-13
+#   it would not -- R2 is just as tall -- but on a circuit whose only
+#   tall grounded element is the rightmost one, it would.
 # * A coupled inductor carries one polarity dot, so an inductor coupled
 #   to two others with opposite signs cannot be drawn faithfully -- the
 #   dot convention itself has no notation for it. The caption still
