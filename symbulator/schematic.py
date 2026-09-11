@@ -2949,6 +2949,74 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     return grounded_at
 
 
+def _merge_runs(segs):
+    """Overlapping collinear segments as one line each.
+
+    The same rule `_flush_wires` applies before drawing, kept here so a
+    question asked of the geometry gets the same answer the reader
+    gets."""
+    hor: List[List[float]] = []
+    ver: List[List[float]] = []
+    for x1, y1, x2, y2 in segs:
+        if abs(y1 - y2) < _EPS and abs(x1 - x2) > _EPS:
+            bucket, key, lo, hi = hor, y1, min(x1, x2), max(x1, x2)
+        elif abs(x1 - x2) < _EPS and abs(y1 - y2) > _EPS:
+            bucket, key, lo, hi = ver, x1, min(y1, y2), max(y1, y2)
+        else:
+            continue
+        for m in bucket:
+            if abs(m[0] - key) < _EPS and lo <= m[2] + _EPS \
+                    and m[1] <= hi + _EPS:
+                m[1], m[2] = min(m[1], lo), max(m[2], hi)
+                break
+        else:
+            bucket.append([key, lo, hi])
+    out = [(lo, key, hi, key) for key, lo, hi in hor]
+    out += [(key, lo, key, hi) for key, lo, hi in ver]
+    return out
+
+
+def _degree_at(cv: _Canvas, x: float, y: float) -> int:
+    """How many line-ends meet at this point on the page.
+
+    A line ending here counts once; a line passing through counts twice,
+    since it arrives and leaves. So a corner is 2, a tee is 3 and a
+    crossroads is 4 -- and 3 is where a dot starts being necessary.
+
+    Wires and element segments both count: an element's axis is a line
+    the reader follows like any other, and a resistor's lead ending on a
+    node is one of the three things meeting there.
+
+    **Collinear runs that overlap are merged first**, exactly as
+    `_flush_wires` merges them before drawing, or the count is of
+    segments rather than of lines. TR5's Example 4-13 draws its op-amp's
+    input as a lead turning down to the node row while the node's own
+    riser already covers that stretch: two records of one line, counted
+    as two ends, and the point came out a tee when the reader sees a
+    corner."""
+    n = 0
+    segs = _merge_runs([w[:4] for w in cv.wires]
+                       + [s[:4] for s in cv.esegs])
+    for x1, y1, x2, y2 in segs:
+        if abs(y1 - y2) < _EPS:                       # horizontal
+            if abs(y1 - y) > 0.5:
+                continue
+            lo, hi = min(x1, x2), max(x1, x2)
+            if abs(lo - x) < 0.5 or abs(hi - x) < 0.5:
+                n += 1
+            elif lo < x < hi:
+                n += 2
+        elif abs(x1 - x2) < _EPS:                     # vertical
+            if abs(x1 - x) > 0.5:
+                continue
+            lo, hi = min(y1, y2), max(y1, y2)
+            if abs(lo - y) < 0.5 or abs(hi - y) < 0.5:
+                n += 1
+            elif lo < y < hi:
+                n += 2
+    return n
+
+
 def _ground_symbol(cv: _Canvas, x: float, y: float) -> None:
     """The stem, the three bars and the node's name. Drawn wherever the
     rail deserves saying so out loud rather than being traced.
@@ -3711,6 +3779,24 @@ def _render_once(elements: List[Element], marks=None,
         cv.raw("", (gx0 - 14, y_bot + 26))
 
     # 5. junction dots on the top row wherever three or more things meet
+    #    **on the page** -- not wherever three things meet in the
+    #    netlist (#376).
+    #
+    # Roberto, 11 Sep 2026: *"where there are two nearby dots, there
+    # should be an incentive to merge them."* Both of TR5's Example
+    # 4-13's pairs are one bug. Node 2 has three elements on it, so this
+    # pass dotted its column at the node row -- but only two lines meet
+    # there, the riser's end and the stub's end, which is a plain
+    # corner. The third connection is the op-amp's input, which leaves
+    # 14.5px higher and gets its own, correct, tee dot from
+    # `_flush_wires`. Two dots, 14.5px apart, for one junction.
+    #
+    # So ask the drawing instead. A dot is earned where three or more
+    # lines actually meet: a line ending at the point counts once, a
+    # line passing through it twice. Where three endpoints genuinely
+    # coincide -- which `_flush_wires` cannot see, since it looks for an
+    # endpoint on another run's *interior* -- the count is 3 and the dot
+    # is still drawn. That case is why this pass exists at all.
     touching: Dict[str, int] = {}
     for e in elements:
         terms = e.fields[:3] if e.kind == "o" else e.nodes
@@ -3718,7 +3804,9 @@ def _render_once(elements: List[Element], marks=None,
             touching[n] = touching.get(n, 0) + 1
     for n, count in touching.items():
         if n != "0" and count >= 3 and n in lay.node_col:
-            cv.dot(lay.px(lay.node_col[n]), y_top)
+            x = lay.px(lay.node_col[n])
+            if _degree_at(cv, x, y_top) >= 3:
+                cv.dot(x, y_top)
 
     # 6. node names, tucked just above the row -- clear of the wire by
     #    GAP like everything else. A node can be called `ag` or `bg`
