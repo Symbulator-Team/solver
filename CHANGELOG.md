@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.6.7 -- 12 Sep 2026 (#423: the drawing restyled on Nilsson & Riedel)
+
+### Changed
+- **The schematic's symbols, stroke weights, label face and colours
+  are Nilsson & Riedel's** (*Electric Circuits*, 12th edition),
+  measured from the book's own vector figures rather than eyeballed --
+  the geometry block in `schematic.py` names the figure each number was
+  read from. One point of the book is 1.6 px of the drawing. Wires at
+  0.5 pt and every symbol body at 0.75 pt; the independent
+  source a 10.5 pt circle with the + and - *inside* it and the current
+  arrow's filled head; the dependent source a diamond 27 pt along the
+  element and 16 pt across; the capacitor 13 pt plates 6 pt apart, one
+  of them bowed inward, with no polarity sign (Roberto's condition);
+  the op-amp 36 pt tall with its pins 8 pt off the axis; junction dots
+  of radius 2 pt.
+- **Four of the book's choices were overruled on sight** and are not
+  the book's: the resistor is the rounded six-segment zigzag of 0.5.26
+  exactly as it was, not the book's sharp seven-segment one; the
+  capacitor is a fifth larger than the book's (`CAP_SCALE`), so that
+  the largest symbol is ten times the smallest by area as before
+  rather than fourteen; the op-amp is equilateral rather than the
+  book's longer triangle; and the ground keeps its three bars, at the
+  body weight, rather than the book's filled triangle.
+  Labels in a Times face at 14 px with 0.7-size subscripts: values
+  upright with a space before the unit, names italic with a digit
+  subscript upright and a letter subscript italic, and the reference
+  quantities a dependent source reads -- the arrow, its label, the
+  drop's signs -- in the book's blue, `var(--schematic-ref, #005b7f)`.
+- **The inductor is not the book's.** Roberto kept his looping coil
+  (*"I prefer my inductor symbol, with curls as it stands today"*); it
+  is scaled uniformly to the book's inductor length and nothing else
+  about it changed. The transformer's windings are that coil too.
+- `LEAD_MIN` 34 -> 26 and `ROW_H_MIN` 96 -> 86, the book's leads and
+  band. Nothing in the layout logic changed: over the 356 built-in
+  drawings crossings (17), bends (359), wires (1334) and dots (881) are
+  identical before and after, and the canvas area is 95.7% of before.
+- `_text_width` is the one width estimate, from the face's own advance
+  widths per character, used by the canvas, by `_runs_width` and by
+  `tools/review_schematics.py`; the 7.2 px average it replaces was the
+  old sans face's.
+- The label metrics (`LABEL_ASCENT` 9.75, `LABEL_DESCENT` 3.0,
+  `CAP_DESCENT` 2.0, `SUB_DY` 2.9) were re-measured in headless Chrome
+  for the new face and size, with the method of `pixel_clearance.py`.
+
 ## 0.6.6 -- 11 Sep 2026 (#392: a chained comparison is a condition)
 
 ### Fixed

@@ -36,15 +36,27 @@ typeset to match, whatever the reader typed: multiplication implied
 rather than starred, a voltage or a current as its own lower-case
 sloped letter, and what it names as a capitalised subscript.
 
-The symbols follow the books the tutorial teaches from -- Sadiku &
-Alexander's *Fundamentals of Electric Circuits* and Boylestad's
-*Introductory Circuit Analysis*: a zigzag resistor with sharp peaks, a
-coil of loops for an inductor, a circle for an independent source and a
-diamond for a controlled one, and element names set the way those books
-set them, as a kind letter with a capitalised subscript (`rin` -> R_IN).
+The symbols, their stroke weights, the label face and the label colours
+are **measured from Nilsson & Riedel's *Electric Circuits*, 12th
+edition** (#423, 12 Sep 2026) -- the geometry block below names the
+figure each number was read from. A bowed plate on the capacitor, a
+circle for an independent source with its marks inside, a tall diamond
+for a controlled one, wires at 0.5 pt and symbol bodies at 0.75 pt of
+the book's scale, and labels in a Times face: a value upright, a
+quantity italic with a subscript, and the reference quantities a figure
+defines in the book's blue. Not everything is the book's: by Roberto's
+own rulings of the same day the resistor keeps its rounded zigzag (see
+`R_SCALE`), the inductor stays his looping coil (see `BODY`), the
+ground keeps its three bars and the op-amp its equilateral triangle.
+
+Element names are set the way the books set them, as a kind letter
+with a capitalised subscript (`rin` -> R_IN), the letter italic and a
+letter subscript italic, a digit subscript upright.
 
 Colours are left to CSS: every stroke is `currentColor`, so one drawing
-works in both the light and dark themes of the site.
+works in both the light and dark themes of the site; the reference
+blue is `var(--schematic-ref)` with the book's #005B7F as its default,
+so a dark theme can lighten it.
 """
 
 from __future__ import annotations
@@ -122,6 +134,24 @@ def _engineering(text: str) -> Optional[str]:
     return scaled + prefix
 
 # --- geometry -------------------------------------------------------
+# The symbols, strokes and label metrics are **measured from Nilsson &
+# Riedel, *Electric Circuits*, 12th edition** (#423, 12 Sep 2026), not
+# eyeballed: the book is vector InDesign output, so every path, stroke
+# width, font, size and colour of a figure can be read off the PDF
+# exactly. The figures the numbers below come from are named beside
+# them -- P4.17, P4.18, P4.23 and P5.18 (pages 138 and 175 of the book),
+# Fig. 6.1, 6.10 and 6.26 (the inductor, the capacitor and a coupled
+# pair), Fig. 9.47 (the ideal transformer) and Fig. P8.24 (a capacitor
+# in a problem). The book sets its figure labels at 9 pt and this
+# drawing sets them at 14 px, so **one point of the book is PT pixels
+# here**; every length below is the book's, in points, times PT. Where
+# a number is quoted as a fraction (a subscript at 6.3/9 of the label)
+# it is dimensionless and carries no PT.
+PT = 1.6            # px per point of the book: 14 px / 9 pt, rounded so
+#                     the independent source (r 10.5 pt) and the op-amp
+#                     (36 pt tall) land within a pixel of where Roberto
+#                     had already put them by eye -- 16.5 and 58.
+
 COL_W = 132        # horizontal distance between adjacent node columns
 ROW_H = 150        # top row of nodes down to the ground rail
 STACK_H = 88       # extra height per stacked parallel branch
@@ -142,67 +172,169 @@ OP_ABOVE_GAP = 60  # clear strip between an above-row body and the row
 OP_ABOVE_H = 126    # the band an above-row op-amp adds over the row
 OP_UNDER_H = 52    # extra height for a non-inverting input routed under
 OP_INK_BANDS = 24  # staircase steps modelling the op-amp wedge's ink
-OP_H = 58.0        # the op-amp triangle's height. Its input pins sit
-# OP_H/4 either side of the output axis, which is the offset a node
-# lifts by when its connection is the op-amp's own input (#377).
+# The op-amp triangle (P5.18): 42 pt long and 36 pt tall -- longer than
+# an equilateral one, which is what the drawing used until #423 -- with
+# its input pins 8 pt either side of the output axis, and the pin signs
+# 7 pt inside the back edge. OP_PIN is also the offset a node lifts by
+# when its connection is the op-amp's own input (#377).
+OP_H = 36.0 * PT   # the triangle's height, 57.6
+# The length is **not** the book's 42 pt. Drawn at that, Roberto ruled
+# (12 Sep 2026): "make the op-amp less pointy, by shortening its
+# length" -- so the triangle is equilateral again, the shape it had
+# been since the symbol was first drawn and which he had never
+# objected to.
+OP_W = OP_H * 3 ** 0.5 / 2.0   # its length, back edge to tip, 49.9
+OP_PIN = 8.0 * PT  # an input pin's offset from the output axis, 12.8
+OP_SIGN_IN = 7.0 * PT   # the pin signs, this far inside the back edge
 MARGIN = 58
-GAP = 4.0          # clear air between a symbol's ink and a label's
+GAP = 4.0          # clear air between a symbol's ink and a label's.
+# The book leaves 1.3 pt (2.1 px) beside a vertical element and about
+# 2.4 pt (3.8 px) above a horizontal one; one number, the larger,
+# serves both here so the review harness's tolerance stays meaningful.
+
+# --- the label face ---------------------------------------------------
+# The book sets figure labels in Times Ten: a value upright (`15 Ω`),
+# a quantity in italic (*v*, *i*, *R*) with a 6.3 pt subscript on a
+# 9 pt letter -- a digit subscript upright, a letter subscript italic
+# -- and the reference quantities a figure defines in blue (#005B7F).
+# Times New Roman is the face every reader's machine has that is
+# closest to it; Liberation Serif is its metric twin on Linux.
+LABEL_FONT = "'Times New Roman',Times,'Liberation Serif',serif"
+LABEL_PX = 14        # 9 pt at PT is 14.4; the app's own scale rounds it
+REF_COLOUR = "#005b7f"   # the book's blue, as `--schematic-ref`'s default
 
 # How far the label font's ink reaches from its own baseline. Measured,
-# not assumed -- 13px ui-sans-serif renders at ascent 9.75 and descent
-# 3.12, and capitals alone still descend 1.25 (Q's tail). The descent is
-# the number that matters: a value like `-4j`, `1/gx` or a node called
-# `ag` hangs below its baseline, and placing labels as though glyphs sat
-# *on* the baseline is what left twenty-one of the 330 example drawings
-# with 1-2px of air above a symbol instead of GAP. Re-measure with
-# `tools/pixel_clearance.py`'s method if the font or size ever changes.
-LABEL_ASCENT = 10.0
-LABEL_DESCENT = 3.25
-CAP_DESCENT = 1.5    # capitals only, which is all a name or subscript is
+# not assumed -- 14px Times New Roman renders in Chrome at ascent 9.75
+# (`-4j`, `1/gx`, lower case) and descent 3.0 (a `j`, a `g`, a `µ`),
+# with digits alone at 9.38 up and 0.12 down, and a capital Q alone
+# descending 2.75. The descent is the number that matters: a value like
+# `-4j`, `1/gx` or a node called `ag` hangs below its baseline, and
+# placing labels as though glyphs sat *on* the baseline is what left
+# twenty-one of the 330 example drawings with 1-2px of air above a
+# symbol instead of GAP (#212). Re-measure with the method of
+# `tools/pixel_clearance.py` if the font or size ever changes -- the
+# numbers here were taken with it on 12 Sep 2026.
+LABEL_ASCENT = 9.75
+LABEL_DESCENT = 3.0
+CAP_DESCENT = 2.0    # a subscript is capitals and digits, and a Q in one
+#                      still descends: 4.88 measured, less SUB_DY
 LABEL_GAP = 2.0      # between two stacked labels
-BODY = 46          # length of the symbol body itself, leads excluded
-DOT_R = 3.4
 
-# The marks a *reference* wears: the element a dependent source names in
-# its value gets the sign of the drop, or the direction of the current,
-# that the source is reading (#213). Both sit on the element's free
-# side -- below a horizontal one, left of a vertical one -- because the
-# name and the value already own the other.
-REF_SIGN_OFF = 10.0    # a reference + / - sign, off the element's axis
-REF_ARROW_W = 4.0      # the reference arrow head's half-width
-REF_ARROW_HEAD = 6.5   # and its length
-REF_ARROW_MIN = 14.0   # shortest half-length the shaft is drawn at
+# Advance widths for the width a label is *bounded* at, per character,
+# from Times New Roman's own metrics (units of 1/1000 em, at LABEL_PX):
+# a digit is 500, a space 250, a colon 278, lower case mostly 444-500
+# and capitals 667-722. One table, used by `_Canvas.runs`, by
+# `_runs_width` and by the review harness, so a caller that has to
+# know where a label's edge falls cannot drift from what is drawn.
+_ADV = {" ": 250, ":": 278, ".": 250, ",": 250, ";": 278, "'": 180,
+        "i": 278, "j": 278, "l": 278, "t": 278, "f": 333, "r": 333,
+        "I": 333, "J": 389, "(": 333, ")": 333, "[": 333, "]": 333,
+        "-": 333, "/": 278, "|": 200, "!": 333, "s": 389, "z": 444,
+        "a": 444, "c": 444, "e": 444, "m": 778, "w": 722, "F": 556,
+        "L": 611, "P": 556, "S": 556, "T": 611, "Z": 611, "E": 611,
+        "B": 667, "C": 667, "K": 722, "R": 667, "N": 722, "D": 722,
+        "G": 722, "H": 722, "O": 722, "Q": 722, "U": 722, "Y": 722,
+        "A": 722, "V": 722, "X": 722, "M": 889, "W": 944, "Ω": 722,
+        "µ": 576, "∠": 700, "°": 400, "π": 500, "Δ": 612, "∞": 713,
+        "=": 564, "+": 564, "*": 500, "^": 469, "<": 564, ">": 564}
+_ADV_DEFAULT = {"lower": 500, "upper": 667, "other": 500}
 
-# The inductor's coil: four turns spanning BODY, so its leads line up
-# with the resistor's. IND_R > IND_STEP/2 is what makes each turn a
-# *loop* rather than a hump -- see `_body_l`.
-# Roberto, 11 Sep 2026: the independent source about 10% larger. 15.0
-# until then, which is what every note before this date refers to.
-SRC_R = 16.5       # independent source outline radius
-# Roberto, 1 Sep 2026: the resistor 20% smaller, the dependent source
-# 10% larger. Both are pure scale factors on the one number each shape
-# is built from, so nothing else in the geometry has to be re-derived --
-# the zigzag's vertex angle, and so its mitre, is unchanged because its
-# length and its amplitude scale together.
-R_SCALE = 0.8      # the resistor, against the other bodies' BODY
-# The dependent source's diamond is built from `SRC_R`, so growing the
-# independent source would have grown it too. `DEP_R` is held at the
-# 16.5 it has been since 1 Sep 2026 and the scale reads 1.0 -- which
-# means the two are now the *same* size, and the 10% that used to tell
-# a dependent source from an independent one at a glance is gone.
-# Flagged for Roberto: 1.1 here restores the difference at 18.15.
-DEP_SCALE = 1.0    # the dependent source's diamond, against SRC_R
-R_BODY = BODY * R_SCALE
-DEP_R = SRC_R * DEP_SCALE
+
+def _char_w(ch: str, sub: bool = False) -> float:
+    adv = _ADV.get(ch)
+    if adv is None:
+        adv = (_ADV_DEFAULT["lower"] if ch.islower() else
+               _ADV_DEFAULT["upper"] if ch.isupper() else
+               _ADV_DEFAULT["other"])
+    return adv / 1000.0 * LABEL_PX * (SUB_SCALE if sub else 1.0)
+
+
+def _text_width(text: str, sub: bool = False) -> float:
+    """The width a run of characters is bounded at."""
+    return sum(_char_w(ch, sub) for ch in text)
+
+
+# --- the symbols --------------------------------------------------------
+# Two stroke weights, as the book draws: wires at 0.5 pt and every
+# symbol body -- the zigzag, the plates, the coil, a source's outline,
+# the op-amp -- at 0.75 pt. `_HALF` is half the *body* stroke, the one
+# a label has to clear.
+STROKE = 0.5 * PT            # wires, 0.8
+BODY_STROKE = 0.75 * PT      # symbol bodies, 1.2
+_HALF = BODY_STROKE / 2.0
+
+# The resistor is **not** the book's. P4.17's zigzag -- 13.72 pt long
+# in seven equal segments, six sharp mitred peaks 1.98 pt off the axis
+# -- was drawn at the book's size, then a quarter larger, then at the
+# old length with the book's proportions inside it, and Roberto ruled
+# on each in turn on 12 Sep 2026: "too small"; "make the resistors
+# about the same size as they were before -- I do not want an element
+# being so much larger than another"; and finally "there's something
+# about this new resistor that I don't like. Can you go back to the
+# previous resistor symbol?" So this is the symbol of 1 Sep 2026
+# (#218) exactly as it was: 36.8 px long, six segments with half-step
+# ends, 7.2 px off the axis, every peak rounded. Only the stroke it is
+# drawn at is the round's (BODY_STROKE), like every other body.
+R_SCALE = 0.8                # the resistor, against the coil's old 46
+R_BODY = 46.0 * R_SCALE      # 36.8
+ZIG_AMP = 9.0 * R_SCALE      # the zigzag's half-height, centreline, 7.2
+
+# The peaks are rounded rather than pointed (Roberto, 1 Sep 2026). Each
+# corner becomes a quadratic whose control point is the old vertex,
+# starting ZIG_ROUND back along each arm -- so the curve leaves and
+# rejoins the straight run along its own direction and there is no join
+# to see. `stroke-linejoin="round"` was the cheap alternative and is not
+# the same thing: its radius is fixed at half a stroke, which is the
+# blob #212 rejected.
+#
+# **Rounding a corner cuts it off**, so the drawn peak is lower than the
+# amplitude the geometry asks for. That is the number a label has to
+# clear, so it -- not ZIG_AMP -- is what REACH is built from.
+ZIG_ROUND = 1.5
+
+_ZIG_ARM = math.hypot(R_BODY / 6.0, 2.0 * ZIG_AMP)   # peak to peak
+_ZIG_CUT = min(ZIG_ROUND, _ZIG_ARM / 2.0)
+# The quadratic's midpoint, for a symmetric interior peak: with the ends
+# a fraction c = cut/arm along each arm, it lands at amp * (1 - c).
+ZIG_PEAK = ZIG_AMP * (1.0 - _ZIG_CUT / _ZIG_ARM)
+
+# The capacitor (Fig. 6.10, P8.24, P7.65 -- every one in the book): two
+# plates 13 pt long and 5.98 pt apart, one straight and **one bowed**
+# toward it by 2.4 pt at the middle. Roberto declined the bowed plate
+# on 1 Sep 2026 as the mark of a polarised capacitor, and on 12 Sep
+# 2026, told that the book draws every capacitor this way and none
+# with a polarity sign, ruled: *"I'm open to using bowed-plate symbol
+# as long as it is without the polarity sign."* So: bowed, unsigned.
+# Scaled up a fifth from the book's, for the same ruling as R_SCALE: at
+# the book's size the capacitor was the smallest symbol by area (199
+# px², against 286 before #423), and Roberto wants the largest-to-
+# smallest ratio near what it was. With the op-amp the largest in both,
+# 10.2 before, 14.4 at the book's sizes, 10.0 with these two scales.
+CAP_SCALE = 1.2
+CAP_HALF = 6.5 * PT * CAP_SCALE   # half a plate, 12.5
+CAP_SEP = 5.98 * PT * CAP_SCALE   # plate to plate, 11.5
+CAP_BOW = 2.4 * PT * CAP_SCALE    # how far the bowed plate's middle leans in
+
+# The inductor is **not** the book's. Fig. 6.1 draws four semicircular
+# humps, 21.65 pt end to end, and Roberto, shown that on 12 Sep 2026,
+# kept his own: *"I prefer my inductor symbol, with curls as it stands
+# today, to the book's m-like symbol."* So the coil is still the
+# projected helix of 1 Sep 2026 (`_body_l`), one line that loops; what
+# #423 changed is only its size, scaled uniformly from the 46 px it was
+# to the book's inductor length so it keeps its shape and stands in
+# the book's proportion to the resistor beside it (1.58 : 1).
+BODY = 21.65 * PT            # the coil, 34.6 -- the longest ordinary
+#                              body, and the length a fallback box and a
+#                              transformer winding are built to
+_IND_SCALE = BODY / 46.0     # the coil's every dimension, from what it was
 # The coil: a projected helix, drawn as one line that loops (see
 # `_body_l`). IND_RATIO is B/A, and it is the only number that decides
 # whether the line crosses itself -- above 1 it loops, at 1 it is a sine
-# wave, below 1 a ripple. IND_H is kept at the height the old four-arc
-# coil reached, 10.99, so the symbol's vertical footprint and every
-# label placed from it stay exactly where they were.
+# wave, below 1 a ripple. IND_H was 11.0 at BODY 46 (the height the old
+# four-arc coil reached); it scales with the length.
 IND_TURNS = 3
 IND_RATIO = 2.6
-IND_H = 11.0
+IND_H = 11.0 * _IND_SCALE
 IND_SEGMENTS = 8          # cubic Beziers per turn; the fit is analytic
 IND_REACH = IND_H
 # Where the curve starts, and how far it runs. Both ends land on y = 0
@@ -243,47 +375,65 @@ def _ind_overhang() -> float:
 
 IND_OVERHANG = _ind_overhang()
 
+# The independent source (P4.17, P4.18): a circle of radius 10.5 pt with
+# the marks inside it. The + and - are 5.4 pt across (arm 2.7) at a hair
+# under the wire's weight, 5.9 pt either side of the centre; the current
+# arrow runs 6 pt either side of the centre with a filled head 5.42 pt
+# long and 2.9 pt wide.
+SRC_R = 10.5 * PT            # 16.8
+SRC_MARK = 5.9 * PT          # a polarity mark's offset from the centre
+SIGN_ARM = 2.7 * PT          # half the width of a + or -, 4.3
+SRC_ARROW = 6.0 * PT         # the current arrow's half-length, 9.6
+ARROW_HEAD = 5.42 * PT       # a filled arrow head's length, 8.7
+ARROW_HALF = 1.45 * PT       # and its half-width, 2.3
+
+# The dependent source (P4.17, P4.18, P4.20): a diamond **27 pt along
+# the element and 16 pt across it**, not a square -- the book's diamond
+# is taller than the circle beside it and narrower. The two radii are
+# separate numbers because the drawing needs them separately: the leads
+# stop at the along one and the labels clear the across one.
+DEP_ALONG = 13.5 * PT        # 21.6, half the diamond along the axis
+DEP_ACROSS = 8.0 * PT        # 12.8, half of it across
+DEP_R = DEP_ALONG            # what the leads and the body extent use
+
+DOT_R = 2.0 * PT             # a junction dot, 3.2
+
+# The ground is **not** the book's. P5.18 marks each grounded point
+# with a small filled triangle, point down; drawn that way, Roberto
+# ruled (12 Sep 2026): "use the three lines model of the ground, as
+# opposed to the arrow pointing down. Make it finer if you want." So
+# the three bars are back -- the widths they had, drawn at the body
+# weight, which is finer than the 1.7 they used to carry.
+GND_BARS = (9.0, 6.0, 3.0)   # half-widths, top to bottom
+GND_STEP = 3.5               # between bars
+GND_STEM = 12.0
+
+# The marks a *reference* wears: the element a dependent source names in
+# its value gets the sign of the drop, or the direction of the current,
+# that the source is reading (#213). Both sit on the element's free
+# side -- below a horizontal one, left of a vertical one -- because the
+# name and the value already own the other. The arrow is the source
+# arrow's own head on a thin shaft, in the book's blue (P4.17's i_Δ).
+REF_SIGN_OFF = 10.0    # a reference + / - sign, off the element's axis
+REF_ARROW_W = ARROW_HALF      # the reference arrow head's half-width
+REF_ARROW_HEAD = ARROW_HEAD   # and its length
+REF_ARROW_MIN = 14.0   # shortest half-length the shaft is drawn at
+
 # How far each symbol's **ink** reaches either side of its own axis.
 # Labels are placed from this rather than from one number for every
 # kind: the bodies are not the same height (a capacitor's plates stand
-# 13 out, a resistor's zigzag 9, a coil IND_REACH), and a fixed offset
-# that clears the shallowest runs through the tallest.
+# CAP_HALF out, a resistor's zigzag ZIG_PEAK, a coil IND_REACH), and a
+# fixed offset that clears the shallowest runs through the tallest.
 #
 # Ink, not path. Each number below starts as a *centreline* distance,
-# and the stroke puts another half-width outside it. The resistor used
-# to reach much further than that: its peaks were mitred to a point, and
-# a mitre runs past its own vertex by half the stroke over the sine of
-# half the vertex angle -- 2.2px here. Measured against rendered pixels,
-# a label the path geometry called 3px clear of the zigzag was 1px clear
-# of its ink, which is what a reader sees as touching.
+# and the stroke puts another half-width outside it; the resistor's
+# already carries its mitre. Measured against rendered pixels, a label
+# the path geometry called 3px clear of the zigzag was 1px clear of its
+# ink, which is what a reader sees as touching (#212).
 # `tools/pixel_clearance.py` is that measurement, kept.
-STROKE = 1.7                 # the drawing's stroke-width
-_HALF = STROKE / 2.0
-ZIG_AMP = 9.0 * R_SCALE      # the zigzag's half-height, centreline
-
-# The peaks are rounded rather than pointed (Roberto, 1 Sep 2026). Each
-# corner becomes a quadratic whose control point is the old vertex,
-# starting ZIG_ROUND back along each arm -- so the curve leaves and
-# rejoins the straight run along its own direction and there is no join
-# to see. `stroke-linejoin="round"` was the cheap alternative and is not
-# the same thing: its radius is fixed at half a stroke, 0.85px, which is
-# the blob #212 rejected.
-#
-# **Rounding a corner cuts it off**, so the drawn peak is lower than the
-# amplitude the geometry asks for: 6.51px against 7.20. That is the
-# number a label has to clear, so it -- not ZIG_AMP -- is what REACH is
-# built from, and the resistor's labels sit 2px closer than they did.
-ZIG_ROUND = 1.5
-
-_ZIG_ARM = math.hypot(R_BODY / 6.0, 2.0 * ZIG_AMP)   # peak to peak
-_ZIG_CUT = min(ZIG_ROUND, _ZIG_ARM / 2.0)
-# The quadratic's midpoint, for a symmetric interior peak: with the ends
-# a fraction c = cut/arm along each arm, it lands at amp * (1 - c).
-ZIG_PEAK = ZIG_AMP * (1.0 - _ZIG_CUT / _ZIG_ARM)
-
 REACH = {"r": ZIG_PEAK + _HALF,
          "l": IND_REACH + _HALF,
-         "c": 13.0 + _HALF,
+         "c": CAP_HALF + _HALF,
          "e": SRC_R + _HALF, "j": SRC_R + _HALF,
          "s": _HALF}
 REACH_BOX = 13.0 + _HALF   # the fallback labelled rectangle
@@ -321,8 +471,11 @@ def _mark_stack() -> float:
 # it already was: the subscript is capitalised, so `rin` and `rIn`
 # were never distinguishable either. The name in the caption block,
 # the answers and the description stays exactly as typed.
-SUB_SCALE = 0.72     # subscript size, as a fraction of the label font
-SUB_DY = 3.4         # how far its baseline drops, px
+# The book's subscript is 6.3 pt on a 9 pt letter, its baseline 1.84 pt
+# lower (P4.18's i_σ, P4.20's v_1) -- 0.7 of the size, and 0.2 of it
+# down, which at LABEL_PX is 2.9.
+SUB_SCALE = 0.7      # subscript size, as a fraction of the label font
+SUB_DY = 2.9         # how far its baseline drops, px
 
 
 def _split_name(name: str) -> Tuple[str, str]:
@@ -343,17 +496,26 @@ def _name_below(subscripted: bool = True) -> float:
 def _runs_width(runs: List[Tuple]) -> float:
     """The rendered width `_Canvas.runs` would bound this label at.
 
-    The same 7.2px average advance, in one place, so a caller that has
-    to know where a label's edge falls -- #338's op-amp name, which is
-    set against a sloping edge -- cannot drift from what is drawn."""
-    return sum(len(r[0]) * (7.2 * SUB_SCALE if r[1] else 7.2) for r in runs)
+    The same per-character table (`_text_width`), in one place, so a
+    caller that has to know where a label's edge falls -- #338's op-amp
+    name, which is set against a sloping edge -- cannot drift from what
+    is drawn."""
+    return sum(_text_width(r[0], r[1]) for r in runs)
 
 
-def _name_runs(name: str) -> List[Tuple[str, bool]]:
+def _sub_italic(sub: str) -> bool:
+    """A letter subscript is italic and a digit subscript upright, which
+    is how the book sets them: *R*_1 and *v*_o (P4.20), *i*_Δ (P4.17,
+    the Δ from a maths face, upright). Mixed -- `R1A` -- follows the
+    letters."""
+    return any(ch.isalpha() and ch != "Δ" for ch in sub)
+
+
+def _name_runs(name: str) -> List[Tuple]:
     """The name as text runs for `_Canvas.runs`: the kind letter at full
-    height, the rest subscripted."""
+    height and italic, the rest subscripted."""
     head, sub = _split_name(name)
-    return [(head, False), (sub, True)]
+    return [(head, False, True), (sub, True, _sub_italic(sub))]
 
 
 def _i_runs(name: str) -> List[Tuple]:
@@ -361,12 +523,12 @@ def _i_runs(name: str) -> List[Tuple]:
 
     The quantity is the symbol -- a lower-case sloped *i*, the way every
     book sets a current -- and the element it belongs to is the whole of
-    its subscript, upright: `R2`, not `R` with a `2` under it. That is
-    one level of subscript, which is all a subscript can carry; the
-    element's own label beside the symbol still reads R with a
-    subscripted 2, and the two are meant to be read together."""
+    its subscript: `R2`, not `R` with a `2` under it. That is one level
+    of subscript, which is all a subscript can carry; the element's own
+    label beside the symbol still reads R with a subscripted 2, and the
+    two are meant to be read together."""
     head, sub = _split_name(name)
-    return [("i", False, True), (head + sub, True, False)]
+    return [("i", False, True), (head + sub, True, _sub_italic(head + sub))]
 
 
 # A float literal long enough to be floating-point dust rather than a
@@ -449,7 +611,10 @@ def _pretty(e: Element) -> str:
     eng = _engineering(val)
     if eng is None:
         return val
-    return eng + _UNIT.get(e.kind, "")
+    # A space between the number and its unit, as the book sets every
+    # value (`15 Ω`, `80 V`, `5 A`).
+    unit = _UNIT.get(e.kind, "")
+    return eng + " " + unit if unit else eng
 
 
 # A `*` no book prints. Multiplication is implied wherever the thing
@@ -739,11 +904,10 @@ class _Canvas:
                 for r in runs if r[0]]
         if not runs:
             return
-        # Bound by an estimate of the rendered width (13px UI font,
-        # ~7.2px average advance), so a long label widens the viewBox
-        # instead of being clipped at its edge.
-        w = sum(len(t) * (7.2 * SUB_SCALE if sub else 7.2)
-                for t, sub, _it in runs)
+        # Bound by the face's own advance widths (`_text_width`), so a
+        # long label widens the viewBox instead of being clipped at its
+        # edge.
+        w = sum(_text_width(t, sub) for t, sub, _it in runs)
         if anchor == "middle":
             x0, x1 = x - w / 2.0, x + w / 2.0
         elif anchor == "end":
@@ -783,7 +947,9 @@ class _Canvas:
 # on the enclosing group.
 
 def _body_r(length: float) -> str:
-    """Six segments -- three full cycles -- with every corner rounded.
+    """Six segments -- three full cycles -- with every corner rounded:
+    the symbol of #218, kept by Roberto's ruling of 12 Sep 2026 over
+    the book's sharper, slimmer one (see `R_SCALE`).
 
     A corner becomes a quadratic whose control point is the corner
     itself, leaving the straight run ZIG_ROUND back along one arm and
@@ -817,20 +983,22 @@ def _body_r(length: float) -> str:
 
 
 def _body_c(length: float) -> str:
-    """Two straight plates.
-
-    A bowed plate was drawn for a few hours on 1 Sep 2026 and taken back
-    out the same day, and the reason is worth keeping: **a curved plate
-    conventionally marks a polarised capacitor**, and Symbulator's are
-    not polarised -- `c1,2,0,1'u` has no + end and the engine never
-    treats one terminal differently from the other. Drawn on every
-    capacitor the curve says something about the component that is not
-    true. It is a nice-looking symbol for a different part."""
-    mid, gap, h = length / 2.0, 5.5, 13.0
+    """A straight plate at the n1 end and a bowed one at the n2 end,
+    leaning in toward it, as the book draws every capacitor (Fig. 6.10,
+    P8.24, P7.65) -- and **no polarity sign**, which is the condition
+    Roberto set on 12 Sep 2026 when he let the bowed plate in. A bowed
+    plate alone is the book's ordinary capacitor; a bowed plate with a
+    + is a polarised one, and Symbulator's are not: `c1,2,0,1'u` has no
+    + end and the engine never treats one terminal differently from the
+    other. The bow is a quadratic whose control point sits twice CAP_BOW
+    in from the chord, which puts the curve's own middle at CAP_BOW."""
+    mid, half = length / 2.0, CAP_SEP / 2.0
+    xa, xb = mid - half, mid + half
     return ('<path d="M0 0 L{0:g} 0 M{1:g} 0 L{2:g} 0"/>'
             '<path d="M{0:g} {3:g} L{0:g} {4:g}"/>'
-            '<path d="M{1:g} {3:g} L{1:g} {4:g}"/>'
-            .format(mid - gap, mid + gap, length, -h, h))
+            '<path d="M{1:g} {3:g} Q{5:g} 0 {1:g} {4:g}"/>'
+            .format(xa, xb, length, -CAP_HALF, CAP_HALF,
+                    xb - 2.0 * CAP_BOW))
 
 
 def _body_l(length: float) -> str:
@@ -903,18 +1071,19 @@ def _source_outline(mid: float, dependent: bool) -> str:
 
     "Dependent sources are usually designated by diamond-shaped
     symbols" -- Sadiku & Alexander, *Fundamentals of Electric
-    Circuits*, Fig. 1.13. The two are no longer drawn to the same radius:
-    a dependent source is DEP_SCALE larger (Roberto, 1 Sep 2026), so
-    every caller that needs to know how far a source reaches has to be
-    told which one it is -- `_body_extent`, the label reach and the
-    wire keep-out all take `dependent` for that reason."""
-    r = DEP_R if dependent else SRC_R
+    Circuits*, Fig. 1.13. The book's diamond (P4.17, P4.18, P4.20) is
+    not a square stood on a corner: it is DEP_ALONG tall along the
+    element and DEP_ACROSS wide across it, taller than the circle
+    beside it and narrower. Every caller that needs to know how far a
+    source reaches has to be told which one it is -- `_body_extent`,
+    the label reach and the wire keep-out all take `dependent`."""
     if not dependent:
         return '<circle cx="{0:g}" cy="0" r="{1:g}" fill="none"/>'.format(
-            mid, r)
+            mid, SRC_R)
     return ('<path d="M{0:g} 0 L{1:g} {2:g} L{3:g} 0 L{1:g} {4:g} Z" '
             'fill="none" stroke-linejoin="miter"/>'
-            .format(mid - r, mid, -r, mid + r, r))
+            .format(mid - DEP_ALONG, mid, -DEP_ACROSS, mid + DEP_ALONG,
+                    DEP_ACROSS))
 
 
 def _body_e(length: float, dependent: bool = False) -> str:
@@ -923,7 +1092,7 @@ def _body_e(length: float, dependent: bool = False) -> str:
     `_polarity`, in absolute coordinates -- drawn here they would be
     caught by the group's rotate() and a vertical source would end up
     with a minus sign standing on end."""
-    mid, r = length / 2.0, (DEP_R if dependent else SRC_R)
+    mid, r = length / 2.0, (DEP_ALONG if dependent else SRC_R)
     return ('<path d="M0 0 L{0:g} 0 M{1:g} 0 L{2:g} 0"/>{3}'
             .format(mid - r, mid + r, length,
                     _source_outline(mid, dependent)))
@@ -931,14 +1100,22 @@ def _body_e(length: float, dependent: bool = False) -> str:
 
 def _body_j(length: float, dependent: bool = False) -> str:
     """Current source, arrow pointing n1 -> n2: the solver's positive
-    i_<name> leaves n1 through the element (engine.add_current)."""
-    mid, r = length / 2.0, (DEP_R if dependent else SRC_R)
+    i_<name> leaves n1 through the element (engine.add_current).
+
+    The arrow is the book's (P4.17's 5 A): a shaft SRC_ARROW either
+    side of the centre at the wire's weight, under a filled head
+    ARROW_HEAD long and 2*ARROW_HALF wide whose tip is the shaft's
+    end."""
+    mid, r = length / 2.0, (DEP_ALONG if dependent else SRC_R)
+    tip, base = mid + SRC_ARROW, mid + SRC_ARROW - ARROW_HEAD
     return ('<path d="M0 0 L{0:g} 0 M{1:g} 0 L{2:g} 0"/>{3}'
-            '<path d="M{4:g} 0 L{5:g} 0"/>'
-            '<path d="M{6:g} -4 L{5:g} 0 L{6:g} 4" fill="currentColor"/>'
+            '<path d="M{4:g} 0 L{6:g} 0" stroke-width="{8:g}"/>'
+            '<path d="M{6:g} {7:g} L{5:g} 0 L{6:g} {9:g} Z" '
+            'fill="currentColor" stroke="none"/>'
             .format(mid - r, mid + r, length,
                     _source_outline(mid, dependent),
-                    mid - 9, mid + 9, mid + 3))
+                    mid - SRC_ARROW, tip, base, -ARROW_HALF, STROKE,
+                    ARROW_HALF))
 
 
 def _body_s(length: float) -> str:
@@ -973,10 +1150,12 @@ def _body_extent(kind: str, length: float,
     if kind == "s":
         return None
     if kind in ("e", "j"):
-        r = DEP_R if dependent else SRC_R
+        r = DEP_ALONG if dependent else SRC_R
         return mid - r, mid + r
     if kind == "c":
-        return mid - 7.0, mid + 7.0        # the two plates and their gap
+        # the two plates and their gap; the bowed plate's chord is the
+        # far edge and its bow leans inward
+        return mid - CAP_SEP / 2.0 - _HALF, mid + CAP_SEP / 2.0 + _HALF
     if kind == "r":
         return mid - R_BODY / 2.0, mid + R_BODY / 2.0
     if kind == "l":
@@ -1125,22 +1304,26 @@ def _coupling_dot(cv: _Canvas, x1: float, y1: float, x2: float,
     cv.dot(x1 + ux * along + ox, y1 + uy * along + oy)
 
 
-def _sign_mark(cv: _Canvas, x: float, y: float, plus: bool) -> None:
-    """A stroked + or - centred on (x, y): 3.5px arms at the page's own
-    stroke width. One drawing style for every sign in a schematic --
-    the voltage source's polarity and the op-amp's input pins draw
-    through here, so they cannot fall out of step (#130: the op-amp's
-    used to be 13px text glyphs, visibly heavier than the source's
-    marks beside them)."""
-    arm = 3.5
+def _sign_mark(cv: _Canvas, x: float, y: float, plus: bool,
+               ref: bool = False) -> None:
+    """A stroked + or - centred on (x, y): SIGN_ARM arms at the wire's
+    weight, which is the book's mark (P4.18's 80 V: 5.4 pt across at a
+    hair under the wire's 0.5 pt). One drawing style for every sign in
+    a schematic -- the voltage source's polarity, the op-amp's input
+    pins and a reference's drop draw through here, so they cannot fall
+    out of step (#130: the op-amp's used to be 13px text glyphs,
+    visibly heavier than the source's marks beside them)."""
+    arm = SIGN_ARM
+    cls = ' class="refk"' if ref else ""     # a reference's drop is blue
     if plus:
-        cv.raw('<path d="M{0:g} {1:g} L{2:g} {1:g} M{3:g} {4:g} L{3:g} '
-               '{5:g}"/>'
-               .format(x - arm, y, x + arm, x, y - arm, y + arm),
+        cv.raw('<path{7} d="M{0:g} {1:g} L{2:g} {1:g} M{3:g} {4:g} L{3:g} '
+               '{5:g}" stroke-width="{6:g}"/>'
+               .format(x - arm, y, x + arm, x, y - arm, y + arm, STROKE,
+                       cls),
                (x - arm, y - arm), (x + arm, y + arm))
     else:
-        cv.raw('<path d="M{0:g} {1:g} L{2:g} {1:g}"/>'
-               .format(x - arm, y, x + arm),
+        cv.raw('<path{4} d="M{0:g} {1:g} L{2:g} {1:g}" stroke-width="{3:g}"/>'
+               .format(x - arm, y, x + arm, STROKE, cls),
                (x - arm, y), (x + arm, y))
 
 
@@ -1158,7 +1341,7 @@ def _polarity(cv: _Canvas, x1: float, y1: float, x2: float,
         return
     ux, uy = dx / span, dy / span          # n1 -> n2, unit length
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
-    off = 7.0
+    off = SRC_MARK                         # inside the outline, as the book
     _sign_mark(cv, cx - ux * off, cy - uy * off, True)    # + toward n1
     _sign_mark(cv, cx + ux * off, cy + uy * off, False)   # - toward n2
 
@@ -1211,9 +1394,9 @@ def _reference_marks(cv: _Canvas, e: Element, x1: float, y1: float,
         for sign, s_ in ((True, -1.0), (False, 1.0)):
             sx = cx + ux * along * s_ + px * off
             sy = cy + uy * along * s_ + py * off
-            _sign_mark(cv, sx, sy, sign)
-            cv.ink(sx - 3.5 - _HALF, sy - 3.5 - _HALF,
-                   sx + 3.5 + _HALF, sy + 3.5 + _HALF)
+            _sign_mark(cv, sx, sy, sign, ref=True)
+            cv.ink(sx - SIGN_ARM - _HALF, sy - SIGN_ARM - _HALF,
+                   sx + SIGN_ARM + _HALF, sy + SIGN_ARM + _HALF)
 
     if not mark_i:
         return
@@ -1225,12 +1408,14 @@ def _reference_marks(cv: _Canvas, e: Element, x1: float, y1: float,
     tx, ty = cx - ux * a + px * off, cy - uy * a + py * off   # tail
     hx, hy = cx + ux * a + px * off, cy + uy * a + py * off   # head
     bx, by = hx - ux * REF_ARROW_HEAD, hy - uy * REF_ARROW_HEAD
-    cv.raw('<path d="M{0:g} {1:g} L{2:g} {3:g}"/>'
-           '<path d="M{4:g} {5:g} L{2:g} {3:g} L{6:g} {7:g}" '
-           'fill="currentColor"/>'
+    # In the book's blue (P4.17's i_Δ): a thin shaft and a filled head,
+    # the same head the current source carries inside its circle.
+    cv.raw('<path class="refk" d="M{0:g} {1:g} L{2:g} {3:g}" '
+           'stroke-width="{8:g}"/>'
+           '<path class="refh" d="M{4:g} {5:g} L{2:g} {3:g} L{6:g} {7:g} Z"/>'
            .format(tx, ty, hx, hy,
                    bx + nx * REF_ARROW_W, by + ny * REF_ARROW_W,
-                   bx - nx * REF_ARROW_W, by - ny * REF_ARROW_W),
+                   bx - nx * REF_ARROW_W, by - ny * REF_ARROW_W, STROKE),
            (min(tx, hx) - REF_ARROW_W, min(ty, hy) - REF_ARROW_W),
            (max(tx, hx) + REF_ARROW_W, max(ty, hy) + REF_ARROW_W))
     cv.ink(min(tx, hx) - REF_ARROW_W - _HALF,
@@ -1242,9 +1427,10 @@ def _reference_marks(cv: _Canvas, e: Element, x1: float, y1: float,
     # its ink edge, not its baseline, on the side it was pushed to.
     edge = off + REF_ARROW_W + _HALF + GAP
     if px:
-        cv.runs(cx - edge, cy + 4.5, _i_runs(e.name), "end")
+        cv.runs(cx - edge, cy + 4.5, _i_runs(e.name), "end", cls="lbl ref")
     else:
-        cv.runs(cx, cy + edge + LABEL_ASCENT, _i_runs(e.name))
+        cv.runs(cx, cy + edge + LABEL_ASCENT, _i_runs(e.name),
+                cls="lbl ref")
 
 
 PORT_BOX_W = 150.0    # the block's width, and its height. The height is
@@ -1374,8 +1560,15 @@ def _port_params(e: Element) -> List[str]:
             for n, v in zip(("11", "12", "21", "22"), parts)]
 
 
-TRANS_OFF = 19.0     # each winding's axis, either side of the core
-TRANS_CORE = 2.5     # half the gap between the two core bars
+# The book's ideal transformer (Fig. 9.47): the windings' axes 24.84 pt
+# apart, the two core bars 4.98 pt apart midway between them and as
+# long as the windings, the polarity dots 6.2 pt outside each axis at
+# the corner where the lead turns, the ratio lettered above between
+# the leads. 19.0 and 2.5 until #423 -- Roberto's eye had already put
+# them within a pixel of the book.
+TRANS_OFF = 12.42 * PT   # each winding's axis, either side of the core
+TRANS_CORE = 2.49 * PT   # half the gap between the two core bars
+TRANS_DOT_OUT = 6.2 * PT  # a polarity dot, this far outside its axis
 # How far below the node row a four-terminal transformer's windings
 # reach (#314): the coil body sits centred in that span, and the lower
 # leads turn sideways at its foot -- 32px above the rail, and past the
@@ -1432,21 +1625,24 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     # flips the coil's ends with it, which is what keeps the pair a true
     # mirror rather than one coil slid over.
     for x, flip in ((xp, " scale(1,-1)"), (xs, "")):
-        cv.raw('<g transform="translate({0:g},{1:g}) rotate(90){3}">{2}</g>'
-               .format(x, y_top, _body_l(foot - y_top), flip),
+        cv.raw('<g transform="translate({0:g},{1:g}) rotate(90){3}" '
+               'stroke-width="{4:g}">{2}</g>'
+               .format(x, y_top, _body_l(foot - y_top), flip, BODY_STROKE),
                (x - REACH["l"], top), (x + REACH["l"], bot))
         cv.ink(x - REACH["l"], top, x + REACH["l"], bot)
         cv.eseg(x, y_top, x, foot, half=BODY / 2.0)
     cv.wire(min(xa, xp), y_top, xp, y_top)
     cv.wire(xs, y_top, max(xb, xs), y_top)
 
+    # The core bars are as long as the windings (Fig. 9.47: 0.3 pt
+    # longer, which is nothing), at the body weight.
     bars = []
     for bx in (mid - TRANS_CORE, mid + TRANS_CORE):
-        bars.append('<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'
-                    .format(bx, top - 3, bot + 3))
-    cv.raw("".join(bars), (mid - TRANS_CORE, top - 3),
-           (mid + TRANS_CORE, bot + 3))
-    cv.ink(mid - TRANS_CORE, top - 3, mid + TRANS_CORE, bot + 3)
+        bars.append('<path d="M{0:g} {1:g} L{0:g} {2:g}" stroke-width="{3:g}"/>'
+                    .format(bx, top, bot, BODY_STROKE))
+    cv.raw("".join(bars), (mid - TRANS_CORE, top),
+           (mid + TRANS_CORE, bot))
+    cv.ink(mid - TRANS_CORE, top, mid + TRANS_CORE, bot)
 
     # Signs agree -> same polarity, dots level. Only a pair of plain
     # numbers can be compared; anything symbolic keeps them together.
@@ -1459,8 +1655,8 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
             break
     if turns:
         same = (turns[0] < 0) == (turns[1] < 0)
-    cv.dot(xp - 9, top + 3)
-    cv.dot(xs + 9, top + 3 if same else bot - 3)
+    cv.dot(xp - TRANS_DOT_OUT, top + 3)
+    cv.dot(xs + TRANS_DOT_OUT, top + 3 if same else bot - 3)
 
     # The sign has gone into the dots, so the ratio shows magnitudes --
     # printing both would say the reversal twice.
@@ -1475,7 +1671,7 @@ def _draw_transformer(cv: _Canvas, e: Element, xa: float, xb: float,
     # Example 13.11, 0.5px). A ratio wider than the gap goes above the
     # node row instead, where the leads are horizontal and the nearest
     # node name is a column away; the name follows it up.
-    est_w = 6.0 * len(ratio)          # 13px sans: `1 : 2` measures ~26px
+    est_w = _text_width(ratio)        # `1 : 2` measures ~25px
     if est_w > 2 * TRANS_OFF - 2 * _HALF - GAP:
         ratio_y = y_top - _HALF - GAP - LABEL_DESCENT
     else:
@@ -1516,7 +1712,7 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
     else:
         maker = _BODIES.get(e.kind)
         body = maker(length) if maker else _body_box(length, e.kind.upper())
-    src_r = DEP_R if dependent else SRC_R
+    src_r = DEP_ALONG if dependent else SRC_R
     cv.eseg(x1, y1, x2, y2,
             half=src_r if e.kind in ("e", "j") else
             0.0 if e.kind == "s" else BODY / 2.0)
@@ -1539,14 +1735,20 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
         val_runs, val = [], ""
     reach = REACH.get(e.kind, REACH_BOX)
     if e.kind in ("e", "j"):
-        reach = src_r + _HALF
+        # A diamond is narrower across the element than it is long
+        # along it, so its labels sit closer than its leads stop.
+        reach = (DEP_ACROSS if dependent else SRC_R) + _HALF
+    # The body draws at the book's heavier weight; the wires around it
+    # stay at the drawing's default. `transform` stays the group's first
+    # attribute, which is what `_cost` keys on to skip symbol groups.
+    grp = '<g transform="{0}" stroke-width="{2:g}">{1}</g>'
     if vertical:
         top, bot = min(y1, y2), max(y1, y2)
         if y1 < y2:
             tf = "translate({0:g},{1:g}) rotate(90)".format(x1, top)
         else:
             tf = "translate({0:g},{1:g}) rotate(-90)".format(x1, bot)
-        cv.raw('<g transform="{0}">{1}</g>'.format(tf, body),
+        cv.raw(grp.format(tf, body, BODY_STROKE),
                (x1 - 22, top), (x1 + 22, bot))
         span = _body_extent(e.kind, length, dependent)
         if span:
@@ -1555,19 +1757,23 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
         # Out to the side by the same clear air the horizontal case
         # leaves above and below, rather than two numbers per kind.
         dx = reach + GAP + 1.5
-        # Name above the midpoint, value below it. The gap has to
-        # carry a line of text plus the name's subscript descent, or
+        # Name above the midpoint, value below it, the pair centred on
+        # the body the way the book centres its one value label beside
+        # a vertical element (P4.17's 15 Ω). The gap between them has to
+        # carry the name's subscript descent and the value's ascent, or
         # the two labels touch (they did, until the clearance check in
         # review_schematics.py was able to see it).
-        cv.runs(mx + dx, my - 6, _name_runs(e.name), "start", owner=_own)
-        cv.runs(mx + dx, my + 13, val_runs, "start", owner=_own)
+        cv.runs(mx + dx, my - LABEL_GAP / 2.0 - _name_below(),
+                _name_runs(e.name), "start", owner=_own)
+        cv.runs(mx + dx, my + LABEL_GAP / 2.0 + LABEL_ASCENT,
+                val_runs, "start", owner=_own)
     else:
         left, right = min(x1, x2), max(x1, x2)
         if x1 < x2:
             tf = "translate({0:g},{1:g})".format(left, y1)
         else:
             tf = "translate({0:g},{1:g}) rotate(180)".format(right, y1)
-        cv.raw('<g transform="{0}">{1}</g>'.format(tf, body),
+        cv.raw(grp.format(tf, body, BODY_STROKE),
                (left, y1 - 22), (right, y1 + 22))
         span = _body_extent(e.kind, length, dependent)
         if span:
@@ -1587,7 +1793,7 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
             val_below = True
             cv.runs(mx, name_up, _name_runs(e.name), owner=_own)
             cv.runs(mx, my + reach + GAP + LABEL_ASCENT, val_runs, owner=_own)
-        elif len(val) * 7.2 > 70:
+        elif _runs_width(val_runs) > 70:
             # A long value centred above the body would run into the
             # neighbouring node's name; below the wire is open.
             val_below = True
@@ -2106,7 +2312,7 @@ class _Layout:
                         other.name, 0) == 0:
                     blocked = True
             if not blocked:
-                out[n] = OP_H / 4.0
+                out[n] = OP_PIN
         return out
 
     def row_y(self, node: Optional[str]) -> float:
@@ -2803,7 +3009,7 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # gap it happens to sit in would be the easy way to make the wires
     # meet, but it distorts the symbol; the leads stretch instead.
     h = h_tri
-    w = h * 3 ** 0.5 / 2.0
+    w = OP_W          # the book's 42 : 36, longer than equilateral
     if lay.above(e):
         # Centred over the gap it spans -- between the *near* input and
         # the output -- so it stands over the feedback resistor rather
@@ -2819,10 +3025,11 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         tx = max(x_out - 26 - w, x_in + 26)
     else:
         tx = max((x_in + x_out) / 2.0 - w / 2.0, x_in + 26)
-    y_minus, y_plus = mid - h / 4.0, mid + h / 4.0
+    y_minus, y_plus = mid - OP_PIN, mid + OP_PIN
 
-    cv.raw('<path d="M{0:g} {1:g} L{0:g} {2:g} L{3:g} {4:g} Z" fill="none"/>'
-           .format(tx, mid - h / 2, mid + h / 2, tx + w, mid),
+    cv.raw('<path d="M{0:g} {1:g} L{0:g} {2:g} L{3:g} {4:g} Z" fill="none" '
+           'stroke-width="{5:g}" stroke-linejoin="miter"/>'
+           .format(tx, mid - h / 2, mid + h / 2, tx + w, mid, BODY_STROKE),
            (tx, mid - h / 2), (tx + w, mid + h / 2))
     cv.obstacle(tx, mid - h / 2, tx + w, mid + h / 2)
     # The ink is the wedge, banded (#338). A band's width is the
@@ -2836,8 +3043,8 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         cv.ink(tx, ya, tx + w * (1.0 - 2.0 * near / h), yb)
     # The pin signs are stroked marks, not text glyphs, so they match
     # the voltage source's polarity marks in weight and size (#130).
-    _sign_mark(cv, tx + 13, y_minus, up_sign == "+")
-    _sign_mark(cv, tx + 13, y_plus, dn_sign == "+")
+    _sign_mark(cv, tx + OP_SIGN_IN, y_minus, up_sign == "+")
+    _sign_mark(cv, tx + OP_SIGN_IN, y_plus, dn_sign == "+")
     # The feedback loop drawn when the output cannot go right (below)
     # passes over the triangle's top, where the name normally sits, so
     # the name yields the spot and moves under the body instead.
@@ -3180,17 +3387,20 @@ def _ground_symbol(cv: _Canvas, x: float, y: float) -> None:
     them it had to know which side it had room on -- a symbol set left of
     a two-port has the block immediately to its right -- and underneath
     there is never anything to collide with."""
-    parts = ['<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'.format(x, y, y + 12)]
-    for i, half in enumerate((11.0, 7.0, 3.0)):
-        yy = y + 12 + i * 4
-        parts.append('<path d="M{0:g} {1:g} L{2:g} {1:g}"/>'
-                     .format(x - half, yy, x + half))
-    cv.raw("".join(parts), (x - 11, y), (x + 11, y + 20))
-    cv.ink(x - 11, y, x + 11, y + 20)
+    hw, depth = GND_BARS[0], GND_STEM + GND_STEP * (len(GND_BARS) - 1)
+    parts = ['<path d="M{0:g} {1:g} L{0:g} {2:g}"/>'
+             .format(x, y, y + GND_STEM)]
+    for i, half in enumerate(GND_BARS):
+        yy = y + GND_STEM + i * GND_STEP
+        parts.append('<path d="M{0:g} {1:g} L{2:g} {1:g}" '
+                     'stroke-width="{3:g}"/>'
+                     .format(x - half, yy, x + half, BODY_STROKE))
+    cv.raw("".join(parts), (x - hw, y), (x + hw, y + depth))
+    cv.ink(x - hw, y, x + hw, y + depth + _HALF)
     # Name the reference node, same as every other node is named -- "0"
     # is a node in the description like any other, and readers tracing
     # v_2 back to its reference need to see it.
-    cv.text(x, y + 20 + LABEL_ASCENT + GAP, "0")
+    cv.text(x, y + depth + LABEL_ASCENT + GAP, "0")
 
 
 def _cost(svg: str) -> Tuple[int, int, int]:
@@ -3367,8 +3577,12 @@ def _final(elements: List[Element], marks, choice) -> str:
 # should look. 34 is the midpoint, offered as a starting point for him
 # to move. `tools/sweep_lead.py` renders the same circuits at several
 # values side by side.
-LEAD_MIN = 34.0
-ROW_H_MIN = 96.0   # the band never deflates past this, whatever is in
+# The book's leads: 20 pt either side of a vertical resistor in a 54 pt
+# band (P4.17), 15-17 pt on a horizontal one in a 44-48 pt column --
+# 24 to 32 px here. 34 until #423.
+LEAD_MIN = 26.0
+# 54-56 pt in the book (P4.17, P4.23), 86-90 px here; 96 until #423.
+ROW_H_MIN = 86.0   # the band never deflates past this, whatever is in
 # it. A drawing with nothing hanging in the band still has to look like
 # a circuit rather than two lines close together.
 
@@ -4121,12 +4335,19 @@ def _render_once(elements: List[Element], marks=None,
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" '
         'viewBox="{0:g} {1:g} {2:g} {3:g}" width="{2:g}" height="{3:g}" '
-        'fill="none" stroke="currentColor" stroke-width="1.7" '
+        'fill="none" stroke="currentColor" stroke-width="{6:g}" '
         'stroke-linecap="round" stroke-linejoin="round" '
         'class="symbulator-schematic">'
-        '<style>.symbulator-schematic .lbl{{font:13px/1 ui-sans-serif,'
-        'system-ui,sans-serif;fill:currentColor;stroke:none}}'
+        # The wire weight is the root's; a symbol body carries its own
+        # heavier `stroke-width` on its group (#423). The label face,
+        # size and colours are the book's -- see the geometry block.
+        '<style>.symbulator-schematic .lbl{{font:{7:g}px/1 {8};'
+        'fill:currentColor;stroke:none}}'
         '.symbulator-schematic .sub{{font-size:{5:g}em}}'
+        '.symbulator-schematic .ref{{fill:var(--schematic-ref,{9})}}'
+        '.symbulator-schematic .refk{{stroke:var(--schematic-ref,{9})}}'
+        '.symbulator-schematic .refh{{fill:var(--schematic-ref,{9});'
+        'stroke:none}}'
         '.symbulator-schematic .mesh{{stroke:var(--accent,currentColor);'
         'opacity:.75}}'
         '.symbulator-schematic .mesh-head{{fill:var(--accent,currentColor);'
@@ -4135,14 +4356,14 @@ def _render_once(elements: List[Element], marks=None,
         'fill:none;opacity:.85}}'
         '.symbulator-schematic .bh-encl{{stroke:var(--accent,currentColor);'
         'fill:none;opacity:.8;stroke-dasharray:5 4}}'
-        '.symbulator-schematic .mesh-lbl{{font:12px/1 ui-sans-serif,'
-        'system-ui,sans-serif;fill:var(--accent,currentColor);stroke:none;'
-        'opacity:.9}}'
-        '.symbulator-schematic .bh-cap{{font:11px/1 ui-sans-serif,'
-        'system-ui,sans-serif;fill:var(--accent,currentColor);stroke:none;'
+        '.symbulator-schematic .mesh-lbl{{font:12px/1 {8};'
+        'fill:var(--accent,currentColor);stroke:none;opacity:.9}}'
+        '.symbulator-schematic .bh-cap{{font:11px/1 {8};'
+        'fill:var(--accent,currentColor);stroke:none;'
         'opacity:.9;letter-spacing:.04em}}</style>'
         '{4}</svg>'
-    ).format(x0, y0, w, h, "".join(cv.parts), SUB_SCALE)
+    ).format(x0, y0, w, h, "".join(cv.parts), SUB_SCALE, STROKE,
+             LABEL_PX, LABEL_FONT, REF_COLOUR)
 
 
 def _rounded(x0: float, y0: float, x1: float, y1: float,
