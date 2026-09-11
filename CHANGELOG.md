@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.6.8 -- 12 Sep 2026 (#426: a coupled pair written as impedances)
+
+### Fixed
+- **A coupled pair written as impedances gets a local reference, as one
+  written in henries always did.** `m` names two elements, and in AC a
+  coil is normally written as an impedance in ohms -- `m,r2,r3,3j` is
+  the tutorial's own idiom and eight of Lesson 10's entries use it. The
+  island check added with #322/#323 recognised a coupling only when the
+  coupled elements were `l`, so the far side of an `r`-spelled pair was
+  reported as floating and the circuit refused, while the identical
+  circuit in henries solved and reported its local reference in note
+  221. The two spellings now agree: same note, same reference node, and
+  every shared answer identical to the last digit. A genuinely stray
+  piece -- one no `m` names -- is still refused as before.
+
 ## 0.6.7 -- 12 Sep 2026 (#423: the drawing restyled on Nilsson & Riedel)
 
 ### Changed
