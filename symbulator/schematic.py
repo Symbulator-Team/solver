@@ -598,6 +598,14 @@ class _Canvas:
         # symbols measures half the picture, and it is the labels that
         # collide. #212 cost three rounds to that distinction.
         self.labels: List[Tuple[float, float, float, float]] = []
+        # The element axis each label belongs to, or None for a label
+        # that belongs to no element -- a node name, a ground name, a
+        # caption. Parallel to `labels`. Roberto, 11 Sep 2026:
+        # *"Labels should not be so close to lines unrelated to
+        # them."* Telling related from unrelated needs the label to
+        # know whose it is, and only the call site knows that.
+        self.label_owner: List[Optional[Tuple[float, float,
+                                              float, float]]] = []
 
     def _bound(self, *pts: Tuple[float, float]) -> None:
         for x, y in pts:
@@ -714,7 +722,7 @@ class _Canvas:
 
     def runs(self, x: float, y: float,
              runs: List[Tuple], anchor: str = "middle",
-             cls: str = "lbl") -> None:
+             cls: str = "lbl", owner=None) -> None:
         """One label built of full-size and subscript runs -- `[("R",
         False), ("1", True)]` is the R_1 an element name is drawn as.
 
@@ -746,6 +754,7 @@ class _Canvas:
                else LABEL_DESCENT)
         self._bound((x0, y - LABEL_ASCENT), (x1, y + low))
         self.labels.append((x0, y - LABEL_ASCENT, x1, y + low))
+        self.label_owner.append(owner)
         body, shift = [], 0.0
         for t, sub, ital in runs:
             want = SUB_DY if sub else 0.0
@@ -1496,6 +1505,10 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
     drawing -- see `_reference_marks`. `refs` is the circuit's own name
     map, which is what lets this element's *value* be set as a book
     would set it (`_value_runs`)."""
+    # Every label this draws belongs to this element, so it may sit
+    # close to its own axis and must keep clear of everything else
+    # (#379).
+    _own = (x1, y1, x2, y2)
     vertical = abs(x2 - x1) < 0.5
     length = abs(y2 - y1) if vertical else abs(x2 - x1)
     if e.kind in ("e", "j"):
@@ -1546,8 +1559,8 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
         # carry a line of text plus the name's subscript descent, or
         # the two labels touch (they did, until the clearance check in
         # review_schematics.py was able to see it).
-        cv.runs(mx + dx, my - 6, _name_runs(e.name), "start")
-        cv.runs(mx + dx, my + 13, val_runs, "start")
+        cv.runs(mx + dx, my - 6, _name_runs(e.name), "start", owner=_own)
+        cv.runs(mx + dx, my + 13, val_runs, "start", owner=_own)
     else:
         left, right = min(x1, x2), max(x1, x2)
         if x1 < x2:
@@ -1572,20 +1585,20 @@ def _draw_element(cv: _Canvas, e: Element, x1: float, y1: float,
             # A source is round and tall: the value goes below it, the
             # name above, both clear of the outline by GAP.
             val_below = True
-            cv.runs(mx, name_up, _name_runs(e.name))
-            cv.runs(mx, my + reach + GAP + LABEL_ASCENT, val_runs)
+            cv.runs(mx, name_up, _name_runs(e.name), owner=_own)
+            cv.runs(mx, my + reach + GAP + LABEL_ASCENT, val_runs, owner=_own)
         elif len(val) * 7.2 > 70:
             # A long value centred above the body would run into the
             # neighbouring node's name; below the wire is open.
             val_below = True
-            cv.runs(mx, name_up, _name_runs(e.name))
-            cv.runs(mx, my + reach + GAP + LABEL_ASCENT, val_runs)
+            cv.runs(mx, name_up, _name_runs(e.name), owner=_own)
+            cv.runs(mx, my + reach + GAP + LABEL_ASCENT, val_runs, owner=_own)
         else:
             # Value just above the body, name above the value.
             vy = my - reach - GAP - LABEL_DESCENT
-            cv.runs(mx, vy, val_runs)
+            cv.runs(mx, vy, val_runs, owner=_own)
             cv.runs(mx, vy - LABEL_ASCENT - LABEL_GAP - _name_below(),
-                    _name_runs(e.name))
+                    _name_runs(e.name), owner=_own)
     if e.kind == "e":
         _polarity(cv, x1, y1, x2, y2)
     if (mark_v or mark_i) and e.kind in TWO_TERMINAL:
@@ -3454,6 +3467,12 @@ def _tighten_band(elements: List[Element], marks, choice) -> Optional[float]:
 H_CLEAR = 20.0     # clear air either side of the widest thing standing
 # in a column gap. Like `LEAD_MIN`, a design choice with a measured
 # range rather than a derived number.
+LABEL_CLEAR = 8.0   # a label keeps this far from any line that is
+# not its own element's. Measured before choosing: across the book
+# the tightest such clearance is 4.7px (Bo2's Example 5.5, the one
+# Roberto caught), five more sit under 8, and then there is a clean
+# break to a structural population of 68 drawings at exactly 11.4.
+# 8 catches the outliers and leaves the normal spacing alone.
 LABEL_APART = 18.0  # two labels on one line stay at least this far
 # apart. Like LEAD_MIN and H_CLEAR, a look-and-feel number with a
 # measured range: the book as shipped has a median of 45 and a
@@ -3545,6 +3564,46 @@ def _collisions(cv: "_Canvas") -> Tuple[int, float]:
             if y0 < ly1 - touch and ly0 + touch < y1 \
                     and lx0 + touch < x < lx1 - touch:
                 hard += 1
+    # Rule: a label may sit close to its **own** element and must keep
+    # clear of every other line (#379). Roberto, 11 Sep 2026, on Bo2's
+    # Example 5.5: *"the label of R2 is too close to the line that goes
+    # from 0 to the positive input of the op-amp. Labels should not be
+    # so close to lines unrelated to them."* It was 4.5px away, and that
+    # wire belongs to the op-amp.
+    #
+    # Only labels that have an owner are asked. A node name is placed
+    # 6px from its own column on purpose; calling that a violation would
+    # be measuring something other than the complaint.
+    own_lines = [w[:4] for w in cv.wires] + [s[:4] for s in cv.esegs]
+    for (lx0, ly0, lx1, ly1), own in zip(cv.labels, cv.label_owner):
+        if own is None:
+            continue
+        # The canvas normalises a segment's endpoints and the owner
+        # tuple keeps the declared order, so the two are compared as
+        # unordered pairs. Matching them literally let an element be
+        # measured against its own axis whenever it was drawn with n1 at
+        # the far end -- a violation that no amount of widening could
+        # fix, since the axis moves with the label.
+        o_lo = (min(own[0], own[2]), min(own[1], own[3]))
+        o_hi = (max(own[0], own[2]), max(own[1], own[3]))
+        for ax1, ay1, ax2, ay2 in own_lines:
+            if abs(min(ax1, ax2) - o_lo[0]) < 0.5                     and abs(min(ay1, ay2) - o_lo[1]) < 0.5                     and abs(max(ax1, ax2) - o_hi[0]) < 0.5                     and abs(max(ay1, ay2) - o_hi[1]) < 0.5:
+                continue                    # its own element's axis
+            if abs(ay1 - ay2) < _EPS:
+                lo, hi = min(ax1, ax2), max(ax1, ax2)
+                if hi < lx0 or lo > lx1:
+                    continue
+                gap = max(ly0 - ay1, ay1 - ly1)
+            elif abs(ax1 - ax2) < _EPS:
+                lo, hi = min(ay1, ay2), max(ay1, ay2)
+                if hi < ly0 or lo > ly1:
+                    continue
+                gap = max(lx0 - ax1, ax1 - lx1)
+            else:
+                continue
+            if gap < LABEL_CLEAR:
+                soft += LABEL_CLEAR - max(gap, 0.0)
+
     # A wire through an element's own body -- the `half` zone either
     # side of its midpoint, which is the part of an element's axis a
     # wire may never cross (its leads may be, with a hop).
