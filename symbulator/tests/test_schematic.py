@@ -18,7 +18,8 @@ import re
 
 import pytest
 
-from symbulator.schematic import to_svg, draw, _split_name, MARGIN, ROW_H
+from symbulator.schematic import (to_svg, draw, _split_name, MARGIN, ROW_H,
+                                  DOT_R)
 from symbulator.elements import CircuitError
 import symbulator.schematic as schematic
 
@@ -492,17 +493,38 @@ def test_inductor_is_one_line_that_loops():
         "over %d turns" % (backwards, IND_TURNS))
 
 
-def test_the_capacitor_plates_are_straight():
-    """A curved plate marks a *polarised* capacitor, and Symbulator's are
-    not: `c1,2,0,1'u` has no + end and the engine never treats one
-    terminal differently from the other. One was drawn for a few hours
-    on 1 Sep 2026 and taken back out; this is the guard on it coming
-    back by accident."""
-    from symbulator.schematic import _body_c
+def test_the_capacitor_has_one_bowed_plate_and_no_polarity_sign():
+    """The book draws every capacitor with one straight plate and one
+    bowed toward it (Nilsson & Riedel 12e, Fig. 6.10 and every problem
+    figure), and Roberto let the bow in on 12 Sep 2026 on one
+    condition: *"as long as it is without the polarity sign"*. A bowed
+    plate alone is an ordinary capacitor; a bowed plate with a + is a
+    polarised one, which Symbulator's are not. So: exactly one straight
+    plate, exactly one bowed plate leaning *inward*, and no sign mark on
+    a capacitor anywhere in a drawing."""
+    from symbulator.schematic import _body_c, CAP_HALF, CAP_SEP, CAP_BOW
     body = _body_c(132)
-    assert "A" not in body, "a plate is curved: " + body
-    for x in (60.5, 71.5):
-        assert "M%g -13 L%g 13" % (x, x) in body, body
+    xa, xb = 66 - CAP_SEP / 2.0, 66 + CAP_SEP / 2.0
+    assert "M%g %g L%g %g" % (xa, -CAP_HALF, xa, CAP_HALF) in body, body
+    bow = re.search(r"M%g %g Q([-\d.]+) 0 %g %g" % (xb, -CAP_HALF, xb,
+                                                     CAP_HALF), body)
+    assert bow, "no bowed plate: " + body
+    # the control point sits inside the gap, so the bow leans in
+    assert xa < float(bow.group(1)) < xb and \
+        abs(xb - float(bow.group(1)) - 2 * CAP_BOW) < 1e-6
+    # and nothing marks a polarity on it: the only two-stroke marks in
+    # a source-free RC drawing are none at all
+    # -- a + is the one path with two M's that does not start at a
+    # symbol's origin (a body's two leads are `M0 0 ... M<x> 0 ...`)
+    svg = to_svg("j1,0,1,2:r1,1,2,100:c1,2,0,1e-6")
+    marks = [d for d in re.findall(r'<path[^>]*d="([^"]+)"', svg)
+             if d.count("M") == 2 and not d.startswith("M0 0")]
+    assert not marks, marks
+    # and the same filter does see the + on a voltage source, so the
+    # check above is not passing by looking at nothing
+    svg = to_svg("e1,1,0,2:r1,1,2,100:c1,2,0,1e-6")
+    assert [d for d in re.findall(r'<path[^>]*d="([^"]+)"', svg)
+            if d.count("M") == 2 and not d.startswith("M0 0")]
 
 
 def test_a_controlled_source_is_a_diamond_and_an_independent_one_a_circle():
@@ -583,8 +605,8 @@ def test_no_label_lands_on_a_symbol():
 def _text_boxes(svg):
     """Estimated boxes for every label, the subscript runs counted at
     their own width and depth."""
-    from symbulator.schematic import (SUB_SCALE, SUB_DY, LABEL_ASCENT,
-                                      LABEL_DESCENT, CAP_DESCENT)
+    from symbulator.schematic import (SUB_DY, LABEL_ASCENT, LABEL_DESCENT,
+                                      CAP_DESCENT, _text_width)
     out = []
     for m in re.finditer(
             r'<text[^>]*x="([-\d.]+)" y="([-\d.]+)" '
@@ -593,8 +615,7 @@ def _text_boxes(svg):
                                m.group(3), m.group(4))
         runs = re.findall(r'<tspan([^>]*)>([^<]*)</tspan>', inner) \
             or [("", inner)]
-        w = sum(len(t) * (7.3 * SUB_SCALE if "sub" in a else 7.3)
-                for a, t in runs)
+        w = sum(_text_width(t, "sub" in a) for a, t in runs)
         x0 = x - w / 2 if anchor == "middle" else (
             x - w if anchor == "end" else x)
         low = y + (SUB_DY + CAP_DESCENT
@@ -659,7 +680,7 @@ def test_a_current_control_draws_an_arrow_from_n1_to_n2():
                                  ((300.0, 100.0), False)):
         cv = _marks(REF_I, "r1", x1, 50.0, x2, 50.0, mark_i=True)
         head = [m.group(1) for m in re.finditer(
-            r'<path d="([^"]*)" fill="currentColor"/>', "".join(cv.parts))]
+            r'<path class="refh" d="([^"]*)"/>', "".join(cv.parts))]
         assert len(head) == 1, cv.parts
         pts = _points(head[0])
         assert len(pts) == 3
@@ -711,7 +732,9 @@ def test_an_unreferenced_element_wears_no_marks():
     """The marks say "a source is reading this". An ordinary divider
     has nothing reading anything, and must come out exactly as before."""
     assert "iR1" not in texts(to_svg(DIVIDER))
-    assert 'font-style="italic"' not in to_svg(DIVIDER)
+    # Since #423 every element *name* is italic (the book's R_1), so the
+    # mark of a reference is the sloped *i* alone.
+    assert 'font-style="italic" dy="0">i<' not in to_svg(DIVIDER)
     assert "iR1" in texts(to_svg(REF_I))
 
 
@@ -771,7 +794,10 @@ def test_a_free_parameter_is_left_exactly_as_typed():
     and the same one that keeps the source a circle."""
     svg = to_svg("e1,1,0,vs:r1,1,0,100")
     assert "vs" in texts(svg)
-    assert 'font-style="italic"' not in svg
+    # upright, as typed -- the element names beside it are italic (#423),
+    # the value is not
+    assert '<tspan dy="0">vs</tspan>' in svg
+    assert 'font-style="italic" dy="0">v<' not in svg
 
 
 def test_pi_is_printed_as_the_letter():
@@ -807,7 +833,7 @@ def test_a_reversed_transformer_says_it_once():
         svg = to_svg(desc)
         assert ratio in texts(svg), (desc, texts(svg))
         dots = re.findall(
-            r'<circle cx="[-\d.]+" cy="([-\d.]+)" r="3.4"', svg)
+            r'<circle cx="[-\d.]+" cy="([-\d.]+)" r="%g"' % DOT_R, svg)
         heights = {round(float(y)) for y in dots if round(float(y)) != y_bot}
         assert len(heights) == levels, (desc, sorted(heights))
 
