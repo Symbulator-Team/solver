@@ -173,14 +173,22 @@ REF_ARROW_MIN = 14.0   # shortest half-length the shaft is drawn at
 # The inductor's coil: four turns spanning BODY, so its leads line up
 # with the resistor's. IND_R > IND_STEP/2 is what makes each turn a
 # *loop* rather than a hump -- see `_body_l`.
-SRC_R = 15.0       # independent source outline radius
+# Roberto, 11 Sep 2026: the independent source about 10% larger. 15.0
+# until then, which is what every note before this date refers to.
+SRC_R = 16.5       # independent source outline radius
 # Roberto, 1 Sep 2026: the resistor 20% smaller, the dependent source
 # 10% larger. Both are pure scale factors on the one number each shape
 # is built from, so nothing else in the geometry has to be re-derived --
 # the zigzag's vertex angle, and so its mitre, is unchanged because its
 # length and its amplitude scale together.
 R_SCALE = 0.8      # the resistor, against the other bodies' BODY
-DEP_SCALE = 1.1    # the dependent source's diamond, against SRC_R
+# The dependent source's diamond is built from `SRC_R`, so growing the
+# independent source would have grown it too. `DEP_R` is held at the
+# 16.5 it has been since 1 Sep 2026 and the scale reads 1.0 -- which
+# means the two are now the *same* size, and the 10% that used to tell
+# a dependent source from an independent one at a glance is gone.
+# Flagged for Roberto: 1.1 here restores the difference at 18.15.
+DEP_SCALE = 1.0    # the dependent source's diamond, against SRC_R
 R_BODY = BODY * R_SCALE
 DEP_R = SRC_R * DEP_SCALE
 # The coil: a projected helix, drawn as one line that loops (see
@@ -3206,13 +3214,20 @@ def _collisions(cv: "_Canvas") -> Tuple[int, float]:
     against labels that overhang it by more than `GAP`."""
     hard, soft = 0, 0.0
     # The canvas sizes a label from a character count at 7.2px an
-    # advance; the review harness uses 7.3 and calls a 1px overlap a
+    # advance; the review harness uses 7.3 and calls any overlap a
     # finding where `GAP` would wave it through. Both are estimates of
-    # the same ink, so the box is widened by a pixel and the tolerance
-    # matched -- a check that is looser than the guard downstream of it
-    # is a check that reports clean and ships a finding.
-    labels = [(x0 - 1.0, y0, x1 + 1.0, y1) for x0, y0, x1, y1 in cv.labels]
-    touch = 1.0
+    # the same ink, and **a check looser than the guard downstream of it
+    # is a check that reports clean and ships a finding** -- which is
+    # what happened when the independent source grew 10% on 11 Sep 2026:
+    # `is1` came to rest exactly on an op-amp's input lead in AS2's
+    # Practice Problem 5.4a, at a measured overlap of 0.0px, and this
+    # waved it through while the harness did not.
+    #
+    # So: widen by 3px a side and count any overlap at all. Being too
+    # strict here costs a little compression on a few drawings; being
+    # too loose costs a fault in the book.
+    labels = [(x0 - 3.0, y0, x1 + 3.0, y1) for x0, y0, x1, y1 in cv.labels]
+    touch = 0.0
     # Rule 7 -- *lines should not be together if they can be apart* --
     # applies to labels, and "do they overlap?" is not that question.
     # Narrowing the gaps to the point where nothing quite touches took
