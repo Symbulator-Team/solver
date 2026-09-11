@@ -204,6 +204,51 @@ def test_inequality_condition_that_excludes_everything_is_reported():
            conditions=["vx > 100"])
 
 
+def test_chained_comparison_condition_selects_among_solutions():
+    """#392: `7 > vx > 3` is how anyone writes a range, and every parser
+    here used to split on the first operator it met -- handing `vx > 3`
+    to a value parser that rightly refuses a comparison inside a value.
+    It is the conjunction of its links now."""
+    res = dc("e1,1,0,vx:r1,1,0,4",
+             equations=["p_r1 = 9"], unknowns=["vx"],
+             conditions=["7 > vx > 3"])
+    assert len(res.solutions) == 1
+    assert res["vx"] == 6
+
+
+def test_chained_comparison_reads_in_either_direction():
+    """Upward and downward say the same thing, and a chain over negative
+    numbers is the case a sign-only reading would get backwards."""
+    up = dc("e1,1,0,vx:r1,1,0,4", equations=["p_r1 = 9"],
+            unknowns=["vx"], conditions=["3 < vx < 7"])
+    assert up["vx"] == 6
+    down = dc("e1,1,0,vx:r1,1,0,4", equations=["p_r1 = 9"],
+              unknowns=["vx"], conditions=["-3 > vx > -7"])
+    assert down["vx"] == -6
+
+
+def test_chained_comparison_that_excludes_everything_is_reported():
+    with pytest.raises(CircuitError):
+        dc("e1,1,0,vx:r1,1,0,4", equations=["p_r1 = 9"],
+           unknowns=["vx"], conditions=["7 > vx > 6.5"])
+
+
+def test_split_chained_comparison():
+    """The splitter itself, including the shapes that must come back
+    whole rather than have a message invented for them."""
+    from symbulator.engine import split_chained_comparison as split
+
+    assert split("7 > x > 3") == ["7 > x ", " x > 3"]
+    assert split("3 <= x <= 7") == ["3 <= x ", " x <= 7"]
+    assert split("1 < a < b < 9") == ["1 < a ", " a < b ", " b < 9"]
+    # One comparison, none at all, an equality, a negative bound: whole.
+    for text in ("x > 3", "vs > 0", "x", "a = b", "x > -3"):
+        assert split(text) == [text]
+    # Malformed -- no operand between two operators -- goes back whole so
+    # the caller's own parser reports it in its own words.
+    assert split("7 > > 3") == ["7 > > 3"]
+
+
 def test_equality_and_inequality_conditions_mix():
     res = dc("e1,1,0,vx:r1,1,0,rx",
              equations=["p_r1 = 9"], unknowns=["vx"],

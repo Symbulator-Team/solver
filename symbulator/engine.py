@@ -32,6 +32,7 @@ when C is 0, with no special-casing needed. See `_stamp_c` below.
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 import sympy as sp
@@ -154,6 +155,14 @@ class Circuit:
 
         self.node_sum: Dict[str, sp.Expr] = {}
         self.equations: List[sp.Eq] = []
+        # #393: what each equation *is*, one entry per equation and in
+        # the same order -- (code, args) pairs from `messages`, so the
+        # interface can say "current balance at node 3" in thirteen
+        # languages without the engine writing prose. Appended only
+        # through `_add_equation`, which is the whole reason the two
+        # lists cannot drift; `stamp_all` checks the lengths anyway,
+        # because a label silently one out of step is worse than none.
+        self.equation_labels: List[Tuple[int, Dict[str, str]]] = []
         self.unknowns: List[sp.Symbol] = []
         # Unknowns the system needs but nobody asked for -- a
         # transformer's primary current when its top node is also
@@ -244,6 +253,49 @@ class Circuit:
         current in."""
         return _sym(f"i_{element_name}")
 
+    # The English noun for each element kind, for the equation labels
+    # (#393). The interface translates it through `tSrv()`, the same
+    # route every other engine-named term takes since #199 -- the
+    # dictionaries already carry `srv.resistor`, `srv.voltage source`
+    # and the rest. The two-port letters all name the same thing.
+    # #405: both kinds of source are just "source" here. A label is read
+    # beside the equation it names, where `v1 = 12` already says which
+    # kind it is -- and the two long spellings were the widest thing in
+    # the column. This map is the labels' own; `symbulator_ui`'s
+    # `_KIND_LABEL` still says "voltage source" where the Results card
+    # needs the distinction.
+    _KIND_NOUN = {"r": "resistor", "l": "inductor", "c": "capacitor",
+                  "e": "source", "j": "source",
+                  "o": "op-amp", "s": "short circuit",
+                  "t": "transformer", "m": "mutual inductance",
+                  "z": "two-port", "y": "two-port", "h": "two-port",
+                  "g": "two-port", "a": "two-port", "b": "two-port"}
+
+    def _add_equation(self, equation, code: int, args=None, **kwargs) -> None:
+        """Append one equation *and* say what it is (#393).
+
+        Every `self.equations.append` in this class goes through here, so
+        the two lists cannot come apart. Slots may be given as keywords
+        (`..., M.L_KCL, node=node`) or as a dict, which is what lets a
+        call site splat a ready-made label: `*self._element_label(e)`.
+        Values are stringified because they cross a JSON boundary on the
+        way to the page."""
+        merged = dict(args or {})
+        merged.update(kwargs)
+        self.equations.append(equation)
+        self.equation_labels.append(
+            (code, {k: str(v) for k, v in merged.items()}))
+
+    def _element_label(self, e: Element, part: str = ""):
+        """The (code, args) naming one element's own defining relation --
+        `part` distinguishes the several equations a transformer or an
+        op-amp stamps."""
+        noun = self._KIND_NOUN.get(e.kind, e.kind)
+        if part:
+            return (M.L_ELEMENT_PART,
+                    {"kind": noun, "name": e.name, "part": part})
+        return (M.L_ELEMENT, {"kind": noun, "name": e.name})
+
     # -- element stamping --------------------------------------------
     def stamp_all(self) -> None:
         """Stamp every element in turn (dispatching to `_stamp_<kind>` by
@@ -260,7 +312,23 @@ class Circuit:
             method(e)
 
         for node, total in self.node_sum.items():
-            self.equations.append(sp.Eq(total, 0))
+            self._add_equation(sp.Eq(total, 0), M.L_KCL, node=node)
+
+        # #393: a label one out of step is worse than no label -- it
+        # names the wrong equation and reads perfectly. Nothing here can
+        # produce that (every append goes through `_add_equation`), which
+        # is exactly why it is worth asserting: the check costs nothing
+        # and it is the next person adding a stamp method who needs it.
+        #
+        # Deliberately not a `CircuitError`: those are written for a
+        # reader and translated. This one cannot be caused by a circuit,
+        # only by editing this file, so it is a plain exception with a
+        # developer's wording.
+        if len(self.equation_labels) != len(self.equations):
+            raise RuntimeError(
+                f"engine: {len(self.equations)} equations carry "
+                f"{len(self.equation_labels)} labels (#393) -- every "
+                f"append must go through _add_equation")
 
         # A dependent source may name a quantity that is *known* rather
         # than solved for: a capacitor's current in AC or FD, or another
@@ -326,7 +394,8 @@ class Circuit:
         n1, n2 = e.n1, e.n2
         i = self.i_symbol(e.name)
         self.unknowns.append(i)
-        self.equations.append(sp.Eq(self.v(n1) - self.v(n2), 0))
+        self._add_equation(sp.Eq(self.v(n1) - self.v(n2), 0),
+                           M.L_SHORT, name=e.name)
         self.add_current(n1, i)
         self.add_current(n2, -i)
 
@@ -361,8 +430,9 @@ class Circuit:
                 if other_sym not in self.unknowns:
                     self.unknowns.append(other_sym)
 
-        self.equations.append(
-            sp.Eq(self.v(e.n1) - self.v(e.n2), R * i + coupling))
+        self._add_equation(
+            sp.Eq(self.v(e.n1) - self.v(e.n2), R * i + coupling),
+            *self._element_label(e))
         self.add_current(e.n1, i)
         self.add_current(e.n2, -i)
 
@@ -387,7 +457,8 @@ class Circuit:
         self.unknowns.append(i)
         if self.domain == "dc":
             # Inductor is a short circuit in DC steady state.
-            self.equations.append(sp.Eq(self.v(e.n1) - self.v(e.n2), 0))
+            self._add_equation(sp.Eq(self.v(e.n1) - self.v(e.n2), 0),
+                               *self._element_label(e))
         elif self.domain == "ac":
             coupling = sp.Integer(0)
             for other_name, m_val in self.mutual_of.get(e.name, []):
@@ -395,9 +466,10 @@ class Circuit:
                 other_sym = self.i_symbol(other_name)
                 if other_sym not in self.unknowns:
                     self.unknowns.append(other_sym)
-            self.equations.append(
-                sp.Eq(self.v(e.n1) - self.v(e.n2), sp.I * self.omega * (L * i + coupling))
-            )
+            self._add_equation(
+                sp.Eq(self.v(e.n1) - self.v(e.n2),
+                      sp.I * self.omega * (L * i + coupling)),
+                *self._element_label(e))
         else:  # fd: s-domain, with initial condition i(0) = ic
             ic = self._value(e.ic)
             coupling = sp.Integer(0)
@@ -408,10 +480,10 @@ class Circuit:
                 other_sym = self.i_symbol(other_name)
                 if other_sym not in self.unknowns:
                     self.unknowns.append(other_sym)
-            self.equations.append(
+            self._add_equation(
                 sp.Eq((self.v(e.n1) - self.v(e.n2)) / self.s,
-                      L * (i - ic / self.s) + coupling)
-            )
+                      L * (i - ic / self.s) + coupling),
+                *self._element_label(e))
         self.add_current(e.n1, i)
         self.add_current(e.n2, -i)
 
@@ -456,7 +528,8 @@ class Circuit:
             return
         i = self.i_symbol(e.name)
         self.unknowns.append(i)
-        self.equations.append(sp.Eq(self.v(e.n1) - self.v(e.n2), val))
+        self._add_equation(sp.Eq(self.v(e.n1) - self.v(e.n2), val),
+                           *self._element_label(e))
         self.add_current(e.n1, i)
         self.add_current(e.n2, -i)
 
@@ -478,7 +551,9 @@ class Circuit:
     def _stamp_o(self, e: Element) -> None:
         """Ideal op-amp / nullor. Fields: n_plus, n_minus, n_out."""
         n_plus, n_minus, n_out = e.fields[0], e.fields[1], e.fields[2]
-        self.equations.append(sp.Eq(self.v(n_plus), self.v(n_minus)))
+        self._add_equation(sp.Eq(self.v(n_plus), self.v(n_minus)),
+                           *self._element_label(e, "inputs at equal "
+                                                   "potential"))
         i_out = self.i_symbol(e.name)
         self.unknowns.append(i_out)
         # ensure input nodes are registered even though no current flows in
@@ -521,7 +596,8 @@ class Circuit:
         i2_expr = -i1 * n1t / n2t
         v1 = self.v(n1) - self.v(n1b)
         v2 = self.v(n2) - self.v(n2b)
-        self.equations.append(sp.Eq(v1 / n1t, v2 / n2t))
+        self._add_equation(sp.Eq(v1 / n1t, v2 / n2t),
+                           *self._element_label(e, "voltage ratio"))
         self._stamp_port_currents(e, [(n1, i1), (n1b, -i1),
                                       (n2, i2_expr), (n2b, -i2_expr)],
                                   free=(n1, i1))
@@ -559,7 +635,8 @@ class Circuit:
                 self.add_current(node, sym)
                 continue
             self.unknowns.append(sym)
-            self.equations.append(sp.Eq(sym, expr))
+            self._add_equation(sp.Eq(sym, expr),
+                               *self._element_label(e, str(sym)))
             self.add_current(node, sym)
 
     def _two_port_params(self, e: Element) -> Tuple[sp.Expr, sp.Expr, sp.Expr, sp.Expr]:
@@ -1007,7 +1084,8 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
                 definition = _derived_definition(circuit, str(sym), domain)
                 if definition is not None:
                     def_eq, def_sym = definition
-                    circuit.equations.append(def_eq)
+                    circuit._add_equation(def_eq, M.L_DERIVED_DEF,
+                                          name=str(def_sym))
                     circuit.unknowns.append(def_sym)
                 else:
                     circuit.unknowns.append(sym)
@@ -1082,17 +1160,61 @@ def solve_circuit_all(elements: List[Element], domain: str, omega=None,
 _INEQ_OPS = ((">=", sp.Ge), ("<=", sp.Le), (">", sp.Gt), ("<", sp.Lt))
 
 
+_CHAIN_SPLIT = re.compile(r"(>=|<=|>|<)")
+
+
+def split_chained_comparison(text: str) -> List[str]:
+    """`"7 > x > 3"` as `["7 > x", "x > 3"]` -- a chained comparison cut
+    into the simple ones it stands for, in order.
+
+    Text holding one comparison, or none at all, comes back as a
+    single-item list, so a caller can always iterate the result and
+    needs no special case.
+
+    Python reads `7 > x > 3` as a chain and so does every reader, but a
+    parser that splits on the first operator it meets does not: it gets
+    `7` and `x > 3`, and hands the second half to a value parser that
+    rightly refuses a comparison inside a value. That was the state of
+    all three of Symbulator's condition parsers until #392, which is why
+    this lives here and is imported rather than written a fourth time.
+
+    Anything malformed -- a missing operand between two operators --
+    comes back whole, so the caller's own parser reports it in its own
+    words instead of this function inventing a message."""
+    parts = _CHAIN_SPLIT.split(text)
+    if len(parts) < 5:            # fewer than two operators: nothing to cut
+        return [text]
+    operands, ops = parts[0::2], parts[1::2]
+    if any(not operand.strip() for operand in operands):
+        return [text]
+    return [f"{operands[i]}{ops[i]}{operands[i + 1]}"
+            for i in range(len(ops))]
+
+
 def _parse_inequality(text: str, reserve_imaginary: bool):
     """`Vs > 0` as a SymPy relational, or None when `text` is not an
     inequality. Parsed by hand rather than through safe_sympify, whose
-    syntax gate deliberately refuses comparisons inside *values*."""
-    for op, make in _INEQ_OPS:
-        if op in text:
-            lhs, rhs = text.split(op, 1)
-            return make(
-                safe_sympify(lhs, reserve_imaginary=reserve_imaginary),
-                safe_sympify(rhs, reserve_imaginary=reserve_imaginary))
-    return None
+    syntax gate deliberately refuses comparisons inside *values*.
+
+    A chained comparison -- `7 > vs > 3`, the way anyone writes a range
+    -- becomes the conjunction of its links (#392). `_filter_solutions`
+    substitutes and simplifies whatever comes back, and an `And` reduces
+    to true or false like any single relation, so nothing downstream
+    needed to change."""
+    rels = []
+    for fragment in split_chained_comparison(text):
+        for op, make in _INEQ_OPS:
+            if op in fragment:
+                lhs, rhs = fragment.split(op, 1)
+                rels.append(make(
+                    safe_sympify(lhs, reserve_imaginary=reserve_imaginary),
+                    safe_sympify(rhs, reserve_imaginary=reserve_imaginary)))
+                break
+        else:
+            return None       # not a comparison at all
+    if not rels:
+        return None
+    return rels[0] if len(rels) == 1 else sp.And(*rels)
 
 
 def _filter_solutions(results, filters):

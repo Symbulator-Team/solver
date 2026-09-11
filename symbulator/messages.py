@@ -188,6 +188,18 @@ N_BH_MANY_SUPERNODES   = 744
 N_BH_ONE_SUPERMESH     = 745
 N_BH_MANY_SUPERMESHES  = 746
 
+# 32x -- equation labels (#393). engine.py's range, because stamping is
+# what produces them. NOT 8xx: that is symbulator_ui's, and the page
+# looks a message up by its number alone, so a label numbered 801 would
+# have rendered as "Please enter a circuit description." Not diagnoses
+# either: their severity is "label", so nothing that renders notes
+# picks them up.
+L_KCL                  = 320
+L_ELEMENT              = 321
+L_ELEMENT_PART         = 322
+L_SHORT                = 323
+L_DERIVED_DEF          = 324
+
 
 CATALOGUE = {
     # --- 2xx elements -------------------------------------------------
@@ -514,6 +526,22 @@ CATALOGUE = {
     N_BH_MANY_SUPERMESHES: ("note",
                             "%{n} of them are written round "
                             "supermeshes."),
+
+    # 32x -- what a stamped equation *is* (#393). Every equation the
+    # engine stamps carries one of these, so a reader looking at the
+    # system can tell a node's current balance from an element's own
+    # relation without reading the mathematics back. They are labels,
+    # not diagnoses: severity "label" keeps them out of anything that
+    # renders notes, which would otherwise start showing one line per
+    # equation on every solve.
+    L_KCL: ("label", "current balance at node %{node}"),
+    L_ELEMENT: ("label", "equation for %{kind} %{name}"),
+    L_ELEMENT_PART: ("label",
+                     "equation for %{kind} %{name} (%{part})"),
+    L_SHORT: ("label", "short circuit across %{name}"),
+    L_DERIVED_DEF: ("label",
+                    "defining equation for %{name}, so an expert-mode "
+                    "equation naming it constrains the circuit"),
 }
 
 def render(code: int, args: dict) -> str:

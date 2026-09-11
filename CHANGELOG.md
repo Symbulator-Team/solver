@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.6 -- 11 Sep 2026 (#392: a chained comparison is a condition)
+
+### Fixed
+- **`7 > vx > 3` is accepted as a condition.** It is how anyone writes a
+  range, and it was refused: `_parse_inequality` split on the first
+  operator it met, so the second half reached `safe_sympify` as the
+  *value* `vx > 3`, which the syntax gate rightly refuses -- the error
+  said "contains a comparison, which is not arithmetic", naming the half
+  rather than the whole. A chain is now the conjunction of its links, in
+  either direction and over any number of them, and
+  `_filter_solutions` substitutes and simplifies an `And` exactly as it
+  does a single relation, so nothing downstream changed.
+- `split_chained_comparison(text)` is the split, exported so the two
+  parsers in the app (the Solve card's and the Evaluate card's, which
+  had the same fault) import it instead of growing a third and a fourth
+  copy. Malformed text comes back whole, so each caller still reports a
+  bad condition in its own words.
+
 ## 0.6.5 -- 11 Sep 2026 (#373-#379: the drawer relaxes, and six rules from a review)
 
 Roberto Perez-Franco reviewed the example book drawing by drawing on
