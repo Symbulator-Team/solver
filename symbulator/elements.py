@@ -632,11 +632,17 @@ def _islands(elements: List[Element], references: Sequence[str] = ()):
     order: List[str] = []           # every node, first-mention order
     port_terms: List[str] = []      # port terminals, first-mention order
     bottoms: List[str] = []         # port bottoms, first-mention order
-    # An inductor named by an `m` element is a coupling's terminal pair
-    # too (#323): the secondary of a coupled pair conducts nothing to
-    # the primary, exactly as a transformer's does, so its side is an
-    # island of the same legitimate kind. Its second node stands in for
-    # a port's bottom when a reference is chosen.
+    # An element named by an `m` is a coupling's terminal pair too
+    # (#323): the secondary of a coupled pair conducts nothing to the
+    # primary, exactly as a transformer's does, so its side is an island
+    # of the same legitimate kind. Its second node stands in for a
+    # port's bottom when a reference is chosen.
+    #
+    # Any element, not just `l` (#426): in AC a coil is written as an
+    # impedance in ohms -- `m,r2,r3,3j` is Lesson 10's own idiom and
+    # eight of its entries use it. Restricting this to `l` refused
+    # exactly those circuits as floating while the henry spelling of
+    # the same circuit solved, which is the oversight #322/#323 left.
     coupled = {n for el in elements if el.kind == "m" for n in el.fields[:2]}
 
     def find(x):
@@ -673,7 +679,7 @@ def _islands(elements: List[Element], references: Sequence[str] = ()):
             note(n)
         for n in nodes[1:]:
             union(nodes[0], n)
-        if el.kind == "l" and el.name in coupled:
+        if el.name in coupled:
             for n in nodes:
                 if n not in port_terms:
                     port_terms.append(n)
