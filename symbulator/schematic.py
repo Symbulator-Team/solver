@@ -142,6 +142,9 @@ OP_ABOVE_GAP = 60  # clear strip between an above-row body and the row
 OP_ABOVE_H = 126    # the band an above-row op-amp adds over the row
 OP_UNDER_H = 52    # extra height for a non-inverting input routed under
 OP_INK_BANDS = 24  # staircase steps modelling the op-amp wedge's ink
+OP_H = 58.0        # the op-amp triangle's height. Its input pins sit
+# OP_H/4 either side of the output axis, which is the offset a node
+# lifts by when its connection is the op-amp's own input (#377).
 MARGIN = 58
 GAP = 4.0          # clear air between a symbol's ink and a label's
 
@@ -2045,6 +2048,59 @@ class _Layout:
         self.block_lane: Dict[str, int] = {}    # four-terminal blocks (#321)
         self.max_block_lane = 0
         self._assign()
+        self.lift: Dict[str, float] = self._lifted_nodes()
+
+    def _lifted_nodes(self) -> Dict[str, float]:
+        """Nodes whose connections are made at a raised op-amp's input
+        pin rather than on the node row (#377).
+
+        Roberto, 11 Sep 2026, on TR5's Example 4-13: *"Align the line to
+        the left with the positive terminal of the op-amp, so that the
+        horizontal line that comes from R2 goes at the same level as the
+        line that connects to the positive terminal. No corner is needed
+        there."*
+
+        A raised op-amp's input leaves `OP_H/4` above the row, so the
+        node's own wire had to drop that far to meet it -- a corner, a
+        14.5px spur and a second dot for one junction. Lift the whole
+        node to the pin and the two are one straight line.
+
+        **Only when nothing else needs the row.** Anything drawn *along*
+        the node row -- a spanning element on level 0, another op-amp,
+        a four-terminal block -- attaches at `y_top` and cannot follow.
+        Of the book's five raised op-amps, two qualify and the three
+        cascades do not: their input node carries the previous stage's
+        output on the row."""
+        out: Dict[str, float] = {}
+        for e in self.opamps:
+            if not self.raised(e):
+                continue
+            n = _up_of(self, e)
+            if n == "0" or n not in self.node_col:
+                continue
+            blocked = False
+            for other in self.elements:
+                if other is e or other.kind == "m":
+                    continue
+                terms = (other.fields[:3] if other.kind == "o"
+                         else other.nodes)
+                if n not in terms:
+                    continue
+                if other.kind == "o" or other.kind == "t" \
+                        or other.kind in PORT_BLOCK:
+                    blocked = True
+                elif other in self.spanning and self.level.get(
+                        other.name, 0) == 0:
+                    blocked = True
+            if not blocked:
+                out[n] = OP_H / 4.0
+        return out
+
+    def row_y(self, node: Optional[str]) -> float:
+        """The height at which wires to `node` are joined -- the node
+        row, or a raised op-amp's input pin where the node was lifted to
+        meet it. `None` and unknown nodes give the row."""
+        return self.y_top - self.lift.get(node or "", 0.0)
 
     def _assign(self) -> None:
         by_node: Dict[str, List[Element]] = {}
@@ -2663,7 +2719,7 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         else x_in + COL_W
 
     lane = lay.op_lane.get(e.name, 0)
-    h_tri = 58.0
+    h_tri = OP_H
     # A non-inverting stage -- row-wired input, feedback divider on the
     # routed one -- is drawn with its row-wired pin *on* the node row, so
     # the input runs straight in and the output straight out. Roberto,
@@ -2796,8 +2852,11 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         cv.wire(tip_a, mid, x_out, mid)
         cv.wire(x_out, mid, x_out, lay.y_top)
         return None
-    # upper input: straight down from its node, then in
-    cv.wire(x_in, lay.y_top, x_in, y_minus)
+    # upper input: straight down from its node, then in -- unless the
+    # node itself was lifted to the pin (#377), in which case the two
+    # are already one line and the riser would be a 14.5px spur.
+    if abs(lay.row_y(up_node) - y_minus) > 0.5:
+        cv.wire(x_in, lay.row_y(up_node), x_in, y_minus)
     cv.wire(x_in, y_minus, tx, y_minus)
     # When several op-amps hang off one input node they share that
     # vertical wire, so the branch to this one is a T-junction and needs
@@ -3693,9 +3752,10 @@ def _render_once(elements: List[Element], marks=None,
         xa, xb = lay.px(lay.node_col[e.n1]), lay.px(lay.node_col[e.n2])
         if lvl:
             # a stacked parallel branch: risers at each end back down to
-            # the row the node actually lives on
-            cv.wire(xa, y_top, xa, y)
-            cv.wire(xb, y_top, xb, y)
+            # the row the node actually lives on -- which is the op-amp's
+            # input pin where that node was lifted to meet it (#377).
+            cv.wire(xa, lay.row_y(e.n1), xa, y)
+            cv.wire(xb, lay.row_y(e.n2), xb, y)
         _draw_element(cv, e, xa, y, xb, y, e.name in lay.controlled,
                       e.name in lay.v_ref, e.name in lay.i_ref, lay.refs)
         segs[e.name] = (xa, y, xb, y)
@@ -3705,8 +3765,9 @@ def _render_once(elements: List[Element], marks=None,
         n = e.n2 if e.n1 == "0" else e.n1
         col_e, col_n = lay.elem_col[e.name], lay.node_col[n]
         x, xn = lay.px(col_e), lay.px(col_n)
+        y_row = lay.row_y(n)
         if col_e != col_n:
-            cv.wire(xn, y_top, x, y_top)   # stub to a parallel column
+            cv.wire(xn, y_row, x, y_row)   # stub to a parallel column
         # keep n1 at the end the element was declared from. When block
         # lanes have made the band taller (#321), the body stays in the
         # first band, level with the top block, and plain wire runs on
@@ -3717,9 +3778,9 @@ def _render_once(elements: List[Element], marks=None,
             y_foot = y_top + lay.row_h
             cv.wire(x, y_foot, x, y_bot)
         if e.n1 == "0":
-            segs[e.name] = (x, y_foot, x, y_top)
+            segs[e.name] = (x, y_foot, x, y_row)
         else:
-            segs[e.name] = (x, y_top, x, y_foot)
+            segs[e.name] = (x, y_row, x, y_foot)
         _draw_element(cv, e, *segs[e.name],
                       dependent=e.name in lay.controlled,
                       mark_v=e.name in lay.v_ref,
@@ -3804,9 +3865,9 @@ def _render_once(elements: List[Element], marks=None,
             touching[n] = touching.get(n, 0) + 1
     for n, count in touching.items():
         if n != "0" and count >= 3 and n in lay.node_col:
-            x = lay.px(lay.node_col[n])
-            if _degree_at(cv, x, y_top) >= 3:
-                cv.dot(x, y_top)
+            x, yr = lay.px(lay.node_col[n]), lay.row_y(n)
+            if _degree_at(cv, x, yr) >= 3:
+                cv.dot(x, yr)
 
     # 6. node names, tucked just above the row -- clear of the wire by
     #    GAP like everything else. A node can be called `ag` or `bg`
@@ -3815,14 +3876,17 @@ def _render_once(elements: List[Element], marks=None,
     # is the strip these names are lettered in -- and runs right to the
     # triangle. Those names go to the left of their dot instead; every
     # other name keeps its place (#367).
+    # And a node lifted to a raised op-amp's pin (#377) took its wire up
+    # with it, so the name goes above *that* line rather than above the
+    # row it no longer sits on. Placed from `row_y` rather than `y_top`,
+    # the two cannot drift apart.
     _raised_in = lay.raised_input_nodes()
     for n, col in lay.node_col.items():
+        y_name = lay.row_y(n) - _HALF - GAP - LABEL_DESCENT
         if n in _raised_in:
-            cv.text(lay.px(col) - 6,
-                    y_top - _HALF - GAP - LABEL_DESCENT, n, "end")
+            cv.text(lay.px(col) - 6, y_name, n, "end")
         else:
-            cv.text(lay.px(col) + 6,
-                    y_top - _HALF - GAP - LABEL_DESCENT, n, "start")
+            cv.text(lay.px(col) + 6, y_name, n, "start")
 
     # 7. the caption block, below the drawing: values too long to
     #    letter at their element (the element keeps its name, see
