@@ -2765,9 +2765,29 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         # Measured from the same baseline the name was placed at, so the
         # two cannot drift apart.
         y_over = min(mid - h / 2.0, y_name - LABEL_ASCENT) - GAP - 8
-        cv.wire(tx, y_minus, tx - 12, y_minus)
-        cv.wire(tx - 12, y_minus, tx - 12, y_over)
-        cv.wire(tx - 12, y_over, x_up, y_over)
+        # **Both legs bend at the same distance from the body** (#375).
+        # Roberto, 11 Sep 2026: *"both legs are bending in opposite
+        # directions. Both have bends already. All I ask is that they
+        # bend at the same distance."*
+        #
+        # And it costs nothing, which is the point. The near input's
+        # turn is not a free choice -- it is its node's own column, so
+        # the lead drops straight onto the node. The far input's was the
+        # constant 12, chosen for no reason at all. Matching the
+        # arbitrary one to the determined one leaves the bend count
+        # exactly as it was: Bo2's Drill Exercise 3.2 had a 12px leg
+        # bending up and a 38px leg bending down.
+        #
+        # The two risers then share a column, one climbing from the
+        # upper pin and one dropping from the lower, with the pin gap
+        # between them. They cannot merge (`_flush_wires` merges only
+        # overlapping collinear runs) and neither earns a dot or a hop.
+        # Kept to the left of the body, since a node lying right of the
+        # triangle has no column here to bend at.
+        x_far = x_dn if x_dn < tx - 1 else tx - 12
+        cv.wire(tx, y_minus, x_far, y_minus)
+        cv.wire(x_far, y_minus, x_far, y_over)
+        cv.wire(x_far, y_over, x_up, y_over)
         cv.wire(x_up, y_over, x_up, lay.y_top)
         # The near input: straight out of the pin and down.
         cv.wire(tx, y_plus, x_dn, y_plus)
@@ -2802,7 +2822,14 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
     # drawing: **a lead leaves toward its destination.** Nothing can be
     # crossed on the way to somewhere you were already going.
     if _op_under(lay, e):
-        x_p = tx - 12 - lane * 8
+        # Both legs bend at the same distance (#375). The upper input
+        # turns at `x_in`, its own node's column, which is not a free
+        # choice; this one's `tx - 12` was. Matching the arbitrary turn
+        # to the determined one adds no bend -- both legs already bend,
+        # in opposite directions -- and the two risers share a column
+        # with the pin gap between them, which is the symbol's own
+        # geometry rather than a join that missed.
+        x_p = min(x_in, tx - 12) - lane * 8
     else:
         x_p = x_in - 30 - lane * 16
     cv.wire(tx, y_plus, x_p, y_plus)
