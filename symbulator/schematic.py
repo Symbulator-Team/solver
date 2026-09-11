@@ -2228,6 +2228,48 @@ class _Layout:
             a, b = idx_of.get(_up_of(self, e)), idx_of.get(e.fields[2])
             if a is not None and a == b:
                 spacer_after[a] = max(spacer_after.get(a, 0), 1)
+        # An under-routed input returning to a node that already has a
+        # grounded element hanging on its own column wants a clear
+        # column before it (#378).
+        #
+        # Roberto, 11 Sep 2026, on TR5's Example 4-13: *"I don't like
+        # how the line that comes out of the inverting terminal has four
+        # corners before it connects near another corner. Looks ugly. So
+        # here's my solution: when you have a cramped situation like
+        # that, enlarge the circuit."*
+        #
+        # The return cannot tee onto the node's own column, because what
+        # hangs there is a resistor and the wire below its body is the
+        # *ground* side of it. It used to dodge 30px left and run back
+        # along a lane 16px under the row -- a fourth corner, and a join
+        # 16px from the corner the row makes with that column. Given a
+        # spacer the arriving element's right-hand lead is long enough
+        # to be teed into directly, which is Roberto's "connect it to
+        # the horizontal to the right of R3, between R3 and the corner".
+        #
+        # Not claimed when this pass may draw the op-amp *above* the
+        # row, because then there is no under-run to return and the
+        # column is a column of nothing. `_render` prices the banded
+        # candidate with the spacer and the above-row one without, and
+        # keeps the cheaper: reserving it unconditionally pushed the
+        # two bodies of `e,1,0,4:o1,1,2,2:o2,2,3,o:ro,3,0,4'k:r6,3,o,6'k`
+        # 11.1px into each other, which is what that cascade's own
+        # regression test is for.
+        on_own_col = {n for n, _e in at_node}
+        may_go_above = self.allow_above or set()
+        for e in self.opamps:
+            if self.op_src.get(e.name) is not None:
+                continue
+            if e.name in may_go_above:
+                continue
+            up = _up_of(self, e)
+            dn = e.fields[1] if up != e.fields[1] else e.fields[0]
+            a, b = idx_of.get(up), idx_of.get(dn)
+            if a is None or b is None or b <= a or dn not in on_own_col:
+                continue
+            if b >= 1:
+                spacer_after[b - 1] = max(spacer_after.get(b - 1, 0), 1)
+
         # A four-terminal block (#314) also wants one clear column on
         # each *outer* side: its lower terminals leave sideways and rise
         # there to the node row, and that riser must not share a column
@@ -2935,10 +2977,29 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
             # column is clear and in the free gap beside it when not.
             blocked = any(lay.elem_col.get(g.name) == dn_col
                           for g in lay.grounded)
-            x_rise = xp_node - 30 if blocked else xp_node
+            # Given the spacer #378 asked for, the arriving element's
+            # right-hand lead is long enough to tee into: rise in the
+            # middle of the last gap, straight onto the node row, and
+            # stop there. Three corners instead of four, and the join is
+            # half a column from the corner instead of 16px.
+            x_try = ((lay.px(dn_col - 1) + xp_node) / 2.0 if dn_col >= 1
+                     else xp_node)
+            roomy = blocked and dn_col >= 1 and _lands_on_lead(
+                cv, x_try, lay.row_y(dn_node))
+            if roomy:
+                x_rise = x_try
+            else:
+                x_rise = xp_node - 30 if blocked else xp_node
             cv.wire(x_p, y_plus, x_p, lay.y_under)
             cv.wire(x_p, lay.y_under, x_rise, lay.y_under)
-            if blocked:
+            if roomy:
+                cv.wire(x_rise, lay.y_under, x_rise, lay.y_top)
+                # The lead it lands on is an *element* segment, and
+                # `_flush_wires` only dots a wire endpoint against
+                # another **wire**'s interior, so this junction has to
+                # say so itself.
+                cv.dot(x_rise, lay.y_top)
+            elif blocked:
                 # Up beside the column and into the node from the left,
                 # 16px under the row -- the same clearance the route
                 # over the top uses, and the last 30px of it. Crossing
@@ -3006,6 +3067,28 @@ def _draw_opamp(cv: _Canvas, lay: _Layout, e: Element) -> Optional[float]:
         else:
             cv.wire(x_out, yl, x_out, lay.y_top)
     return grounded_at
+
+
+def _lands_on_lead(cv: _Canvas, x: float, y: float) -> bool:
+    """Is `(x, y)` on the bare lead of a horizontal element -- on its
+    axis, inside its span and clear of its body?
+
+    The question a returning wire has to ask before teeing onto the node
+    row: landing on the body itself would draw through a resistor, and
+    landing past the span would join nothing. Asked of the canvas rather
+    than of the column arithmetic, because the body's half-length is the
+    only thing that decides where the lead begins, and the canvas is
+    where that is recorded."""
+    for x1, y1, x2, y2, half in cv.esegs:
+        if abs(y1 - y2) > _EPS or half <= 0 or abs(y1 - y) > 0.5:
+            continue
+        lo, hi = min(x1, x2), max(x1, x2)
+        if not (lo + 1 < x < hi - 1):
+            continue
+        mid = (x1 + x2) / 2.0
+        if abs(x - mid) > half + GAP:
+            return True
+    return False
 
 
 def _merge_runs(segs):
@@ -3132,6 +3215,25 @@ def _cost(svg: str) -> Tuple[int, int, int]:
     return (svg.count(_HOP_ARC), bends, len(hor) + len(ver))
 
 
+_VIEWBOX_RE = re.compile(
+    r'viewBox="([-\d.]+) ([-\d.]+) ([-\d.]+) ([-\d.]+)"')
+
+
+def _area(svg: str) -> float:
+    """The drawing's canvas area -- the last tiebreak between two
+    placements the price list cannot separate.
+
+    Roberto's rule 5, *keep as small a relative figure size compared to
+    the size of the elements*, and **last** is where it belongs:
+    measured against the 22 drawings he ruled on when he accepted 0.6.4,
+    an objective that puts size first contradicts him on 19 of them, and
+    one that puts it after `(crossings, bends, wires)` agrees with all
+    22. Without it the choice fell to whichever candidate `_placements`
+    happened to yield first, which is not a reason."""
+    m = _VIEWBOX_RE.search(svg)
+    return float(m.group(3)) * float(m.group(4)) if m else 0.0
+
+
 def _seg(hor, ver, x1: float, y1: float, x2: float, y2: float) -> None:
     if abs(y1 - y2) < 0.01 and abs(x1 - x2) > 0.01:
         hor.append((min(x1, x2), max(x1, x2), y1))
@@ -3159,11 +3261,29 @@ def _render(elements: List[Element], marks=None) -> str:
     ups = sorted(_Layout(elements, allow_above=set(
         e.name for e in lay.opamps)).op_above)
     if rows or ups:
-        best, best_cost = None, None
-        for choice in _placements(rows, ups):
-            c = _cost(_render_once(elements, marks, *choice))
-            if best_cost is None or c < best_cost:
-                best, best_cost = choice, c
+        priced = [(_cost(_render_once(elements, marks, *choice)), choice)
+                  for choice in _placements(rows, ups)]
+        cheapest = min(c for c, _ch in priced)
+        tied = [ch for c, ch in priced if c == cheapest]
+        if len(tied) == 1:
+            best = tied[0]
+        else:
+            # The price list cannot separate them, so fall to size --
+            # Roberto's rule 5, and **last** is where it belongs.
+            # Measured against the 22 drawings he ruled on when he
+            # accepted 0.6.4, an objective that puts size first
+            # contradicts him on 19 of them; after `(crossings, bends,
+            # wires)` it agrees with all 22. Without it the choice fell
+            # to whichever candidate `_placements` yielded first, which
+            # is not a reason.
+            #
+            # Measured on the **finished** drawing, not the candidate.
+            # `_final` closes the band and the gaps afterwards, and the
+            # two orderings disagree: Bo2's Drill Exercise 3.2's banded
+            # candidate is the smaller of the two before tightening and
+            # the larger after it. Pricing the candidate would pick the
+            # drawing that does not get drawn.
+            best = min(tied, key=lambda ch: _area(_final(elements, marks, ch)))
         # Drawn again, so the winner is the last thing drawn. The review
         # harness and the editable-drawing exporter both read the canvas
         # by hooking `_Canvas._flush_wires`, and a hook sees the last
