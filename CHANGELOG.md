@@ -1,5 +1,93 @@
 # Changelog
 
+## 0.6.5 -- 11 Sep 2026 (#373-#379: the drawer relaxes, and six rules from a review)
+
+Roberto Perez-Franco reviewed the example book drawing by drawing on
+10-11 Sep 2026. Every item below is written as a rule, with the drawing
+that found it as evidence rather than as the subject.
+
+### Changed
+- **The band and the column gaps close to what a drawing needs (#373).**
+  `ROW_H` and `COL_W` were constants, so a drawing of one source and two
+  resistors was laid out on the same grid as a three-phase network:
+  measured over the 356 built-in drawings, the median one carried 113px
+  of air in the band between the node row and the ground rail, and 95px
+  in every column gap. Both now close, by a measuring pass rather than a
+  model -- the drawing is rendered at full size, asked what actually
+  stands in it, and redrawn. Roberto's balloon deflates as well as
+  inflating.
+
+  The vertical needs one number for the whole band, because every gap in
+  it closes at the same rate; the horizontal needs one per gap and then a
+  short relaxation, because two labels at the same height need the sum of
+  their widths and not the larger of them. A tightening is kept only when
+  `(crossings, bends, wires)` is unchanged and nothing new collides, so
+  the worst case is the uniform grid it started from.
+
+- **The independent source symbol is 10% larger (#374).** `SRC_R` 15.0 ->
+  16.5, at Roberto's ask. The dependent source's diamond is held where it
+  was, so the two are now the same size.
+
+- **Both of an op-amp's input legs bend at the same distance (#375).**
+  Of the book's 78 op-amps, not one had legs of equal length. 58 have a
+  reason -- the lower input drops to the rail, or carries a captured
+  source drawn in that drop, and either needs a column clear of the upper
+  input's riser. For the other 20 one leg's turn was its node's own
+  column and the other's was a bare constant; the arbitrary one now
+  matches the determined one. No bend is added, because both legs already
+  bent. Three drawings lose a bend, three lose a stray dot, two lose
+  crowding and three lose a wire.
+
+- **A junction dot goes where three lines meet on the page, not in the
+  netlist (#376).** The dot pass marked a node's column whenever three
+  or more elements touched that node, whether or not three lines met
+  there -- so TR5's Example 4-13 carried two dots 14.5px apart for one
+  junction, the second being a plain corner. It now counts lines: ending
+  at the point counts once, passing through twice, and three is where a
+  dot is earned. Collinear runs are merged first, or the count is of
+  segments rather than of lines. Across the book, 942 junction dots ->
+  881, and drawings carrying a dot where fewer than three lines meet:
+  56 -> 0.
+
+- **A node lifts to meet a raised op-amp's input (#377).** The input
+  leaves `OP_H/4` above the node row, so the node's own wire dropped that
+  far to meet it -- a corner and a spur. The node now rises to the pin
+  and the line runs straight in. Only where nothing else needs the row:
+  three of the book's five raised op-amps qualify.
+
+- **A cramped return gets a column, and joins the lead rather than the
+  corner (#378).** An under-routed input returning to a node that has a
+  grounded element on its own column could not tee onto that column --
+  the wire below the body is the ground side of it -- so it dodged 30px
+  left and ran back along a lane 16px under the row. It now claims a
+  spacer column before that node and tees straight onto the arriving
+  element's lead. Six drawings, each losing a bend, a wire, a
+  near-corner join and two crowded pairs.
+
+- **A label keeps clear of every line that is not its own element's
+  (#379).** A label may sit close to its own element -- `GAP` is exactly
+  that -- and the complaint was about everything else. Labels now carry
+  the axis of the element that drew them, and the relaxation widens the
+  gaps until an unrelated line is far enough away. Exactly one drawing in
+  356 was closer than 12px; it was 4.7px and is now 22.7px.
+
+- **Where the price list cannot separate two placements, the smaller
+  finished drawing wins.** Size is the last term, never the first:
+  measured against the drawings Roberto ruled on when he accepted 0.6.4,
+  an objective that puts size first contradicts him on 19 of 22. It is
+  measured on the finished drawing, since the band and the gaps close
+  afterwards and the two orderings can disagree.
+
+### Unchanged
+- Crossings. All 17 in the book are where they were, including the four
+  Roberto has ruled unavoidable.
+
+Over the example book: bends 372 -> 359, near-corner joins 10 -> 3,
+dots where fewer than three lines meet 64 -> 0, crowded pairs 140 -> 125,
+wires 1346 -> 1334, and total canvas area 75.8% of before. All 356
+drawings move; three are larger than before, each one where #378 bought
+a column to uncramp a return.
+
 ## 0.6.4 -- 10 Sep 2026 (#367-#369: the op-amp drawings, chosen by cost rather than by rule)
 
 ### Changed
