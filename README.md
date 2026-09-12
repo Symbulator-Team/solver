@@ -389,7 +389,9 @@ out: the sampler sidesteps the symbolic inversion entirely.
 **`pf()` has the calculator's two forms, and they read different
 powers.** Give it a complex value — a complex power such as `res["s_e"]`,
 an impedance, a number, an expression with symbols in it — and it returns
-|Re| / |S|, symbolic if the value is, and no direction. Give it an
+|Re| / |S|, symbolic if the value is, and no direction (the app prints the
+word for a numerical value, read on the value as given, beside the same
+number). Give it an
 element's *name* with the `Result` of the AC solve and it returns the
 sentence version 8 printed, with the word:
 
