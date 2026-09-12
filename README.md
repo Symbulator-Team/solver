@@ -386,23 +386,38 @@ numerically — useful when the inverse Laplace transform of a
 complicated answer has no closed form and `tr()` leaves that variable
 out: the sampler sidesteps the symbolic inversion entirely.
 
-**A sign note on `pf()` at a source.** The package's convention is that
-`v_*`/`i_*` describe power *consumed* by an element, which is the wrong
-way round for reading a source's power factor as leading/lagging —
-negate the current first:
+**`pf()` has the calculator's two forms, and they read different
+powers.** Give it a complex value — a complex power such as `res["s_e"]`,
+an impedance, a number, an expression with symbols in it — and it returns
+|Re| / |S|, symbolic if the value is, and no direction. Give it an
+element's *name* with the `Result` of the AC solve and it returns the
+sentence version 8 printed, with the word:
 
 ```python
 from symbulator import ac, pf
 
 res = ac("e,1,0,30:r1,1,2,6:r2,2,0,-2j:r3,2,0,4",
          omega=sp.Symbol("omega"), use_rms=True)
-pf(res["v_e"], -res["i_e"])          # pf: 0.97342 leading   — correct
-pf(res["v_e"],  res["i_e"])          # pf: 0.97342 lagging   — backwards
+pf(res["s_e"])          # 0.973417...  — the value alone
+pf("e", res)            # 'pf: 0.97342 leading'
+pf("r2", res)           # 'pf: 0.0 leading'
+pf(sp.Symbol("x") + 2*sp.I)   # Abs(x)/sqrt(x**2 + 4)
 ```
 
-`pf()` takes raw values and cannot know whether they came from a source
-or a load, so it cannot do the flip for you (the calculator's version
-special-cased element *names* and could).
+Which power the reading is taken on is the whole subtlety, and it is the
+calculator's rule. A *variable* such as `s_e`, `s_j` or `s_r1` is read as
+it stands — the complex power *consumed*, which is what the package stores
+for every element, source or load alike. That cannot tell leading from
+lagging (the same power is consumed by one side of a branch and delivered
+by the other), so this form gives the value alone. A *name* is read by the
+element's kind: a load (`r`, `l`, `c`) on the power it *consumes*, so an
+inductive load reads lagging; a source (`e`, `j`) on the power it
+*delivers*, the current negated first, so a source reads the circuit it
+sees, and a source feeding an inductive load says lagging like the load.
+The value is the same either way; only the word depends on it, and a
+source read on `s_e` would say the opposite word. The name form needs the
+element's voltage and current to evaluate to numbers; with a symbol still
+in them it raises, and the value form still works.
 
 ## In a notebook (Jupyter, JupyterLab, Colab, VS Code)
 
@@ -532,10 +547,11 @@ numbers is a reliable fallback.
 
 ## Scope: what's simplified vs. the calculator version
 
-- **`pf()`** is ported as a simplified, explicit-argument version (pass
-  a voltage and current phasor directly); the original's implicit
-  per-element-type sign convention, driven by reading calculator
-  variables like `v<name>`/`i<name>` automatically, wasn't replicated.
+- **`pf()`** is ported as the calculator had it (#430): a complex value
+  gives the ratio alone, an element's name with its `Result` gives the
+  value and the word, read by the element's kind. Until 0.6.8 it took a
+  voltage and a current instead and left the source's sign flip to the
+  caller.
 - **`fd()`** requires s-domain source values, as the calculator's does;
   the `{...}` shorthand converts a time-domain one where you write it.
   `tr()` reads its sources in the time domain, also as the calculator's
