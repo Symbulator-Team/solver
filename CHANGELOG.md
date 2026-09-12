@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.6.9 -- 13 Sep 2026 (#430: the pf tool as version 8 has it)
+
+### Changed
+- **`pf()` takes one value, as the calculator's did, and its two forms
+  are the calculator's two forms.** `pf(res["s_e"])` -- a complex power,
+  an impedance, any complex value, symbolic or not -- returns |Re| / |S|
+  and no direction, since a bare number cannot say leading from lagging:
+  the calculation is done on the value as given, which for `s_e` is the
+  power the source *consumes*, and consumed or delivered the ratio is
+  the same. `pf("e", res)` -- an element's name with the AC `Result` it
+  belongs to -- returns the sentence version 8 printed,
+  `pf: 0.97342 leading`, and reads the word the way version 8 read it: a
+  load (`r`, and in version 9 `l` and `c`) on the power it *consumes*, a
+  source (`e`, `j`) on the power it *delivers*, the current negated
+  first, so a source reports the power factor of the circuit it sees.
+  The port shipped in 0.5.x took a voltage and a current instead and
+  left the negating to the caller, which the README had to warn about;
+  the warning is gone with the reason for it. A symbol in the value is
+  taken as real, as the calculator takes it, so `pf(x + 2*I)` is
+  `Abs(x)/sqrt(x**2 + 4)` in the caller's own `x`.
+
 ## 0.6.8 -- 12 Sep 2026 (#426: a coupled pair written as impedances)
 
 ### Fixed
