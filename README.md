@@ -164,10 +164,11 @@ parameters from an actual sub-circuit.
 `dc()`, `ac()`, and `fd()` return a `Result` with:
 - `res.v(node)` -- node voltage
 - `res.i(name)` -- element/branch current
-- `res["p_<name>"]` -- real (average) power in watts; in ac `res["ap_<name>"]`
-  is the same answer under its older name, whichever convention is in force
-  (until 0.6.10 the peak convention named it `ap_` only). **Neither is
-  apparent power** -- that is `abs(res["s_<name>"])`
+- `res["p_<name>"]` -- power in watts: in DC the power consumed, in AC the
+  average (real) power, the real part of the complex power under either
+  convention (`res["ap_<name>"]` is the same answer under the calculator's
+  name); **not apparent power** -- that is `abs(res["s_<name>"])`
+- `res["q_<name>"]` -- reactive power in vars (AC only), the imaginary part
 - `res["s_<name>"]` -- complex power (AC only)
 - `res["z_<name>"]` / `res["r_<name>"]` -- impedance / resistance seen by a source (AC / DC only)
 

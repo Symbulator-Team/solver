@@ -53,7 +53,7 @@ def _sym(name: str) -> sp.Symbol:
 # Answer-name prefixes an alias may resolve to, per element. `v_` for
 # nodes is added separately (and wins a collision, matching the
 # node-owned precedence in stamp_all's reference closure).
-_ALIAS_PREFIXES = ("i", "v", "p", "r", "z", "s", "ap")
+_ALIAS_PREFIXES = ("i", "v", "p", "r", "z", "s", "ap", "q")
 
 
 def _norm_name(name: str) -> str:
