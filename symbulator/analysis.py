@@ -53,7 +53,7 @@ class Result:
     # so that `apr1` is read as `ap_r1` and not as `a` + `pr1`. Only
     # these spellings are looked up; a user's own unknown (`pout`) is
     # stored under its own name and found directly.
-    _QUANTITIES = ("ap", "i", "p", "r", "s", "v", "z")
+    _QUANTITIES = ("ap", "i", "p", "q", "r", "s", "v", "z")
 
     def resolve(self, key: str) -> str:
         """The stored name for `key`, which may be written either way
@@ -256,9 +256,10 @@ def _seen_impedance(vdiff: sp.Expr, i: sp.Expr):
 def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
              use_rms: bool = False) -> Dict[str, sp.Expr]:
     """Compute the third-level quantities, derived *after* the KCL system
-    is solved: branch voltage (v_<name>), power (p_<name> in dc, or
-    complex power s_<name> plus its real part, the average power, in ac
-    -- under p_<name> with RMS phasors and ap_<name> without), and
+    is solved: branch voltage (v_<name>), power (p_<name> in dc; in ac
+    the complex power s_<name>, its real part p_<name>, the average
+    (real) power, also under the calculator's name ap_<name>, and its
+    imaginary part q_<name>, the reactive power), and
     -- for sources only -- the impedance/resistance the source sees
     looking into the rest of the circuit (z_<name> / r_<name>).
 
@@ -289,14 +290,18 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
                 s = _clean_noise(sp.simplify(s))
                 out[f"s_{e.name}"] = s
                 if e.kind in "ejr":
-                    # The real (average) power under both of its names,
-                    # whichever convention is in force (#439, Roberto,
-                    # 13 Sep 2026): the calculator named it `ap` with
-                    # peak phasors and `p` with RMS ones, so an Evaluate
-                    # of `pr1 + pe1` came back unevaluated with RMS off.
+                    # #441 (Roberto, 13 Sep 2026): in AC the powers are
+                    # P, Q and S as every book writes them -- `p` = Re(S),
+                    # the average (real) power, `q` = Im(S), the reactive
+                    # power, and `s` -- under both conventions. The
+                    # calculator named the average `ap` with peak phasors
+                    # and `p` with RMS ones, so a name existed in one
+                    # setting and not the other; `ap` stays as an alias
+                    # of `p`, never shown, for the calculator habit.
                     p = sp.simplify(sp.re(s))
                     out[f"p_{e.name}"] = p
                     out[f"ap_{e.name}"] = p
+                    out[f"q_{e.name}"] = sp.simplify(sp.im(s))
                     if e.kind in "ej":
                         z = _seen_impedance(vdiff, i)
                         if z is not None:
@@ -323,6 +328,7 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
                 p = sp.simplify(sp.re(s))
                 out[f"p_{e.name}"] = p
                 out[f"ap_{e.name}"] = p
+                out[f"q_{e.name}"] = sp.simplify(sp.im(s))
             else:
                 out[f"p_{e.name}"] = sp.simplify(vout * (-i))
     return out

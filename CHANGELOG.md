@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.11 -- 13 Sep 2026 (#441: the AC powers are p, q and s)
+
+### Changed
+- **In AC every element reports `p_<name>`, `q_<name>` and `s_<name>` --
+  P, Q and S as every book writes them -- under both conventions.** `p`
+  is Re(S), the average (real) power; `q`, new, is Im(S), the reactive
+  power, in vars; `s` keeps its half under peak phasors, as every book
+  defines it. The calculator named the average `ap` with peak phasors
+  and `p` with RMS ones, so a name existed in one setting and not the
+  other; now `p` is the name in both, and `ap_<name>` stays as an alias
+  of it for the calculator habit -- present in the answers, never shown
+  on a card. Roberto's decision of 13 Sep 2026, after the alternatives
+  were put to him: Q is an amplitude, not an average, so *ap* beside
+  *q* named the two unevenly. DC is untouched. `q` joins the answer-name
+  aliases, so `qr1` reads as `q_r1`.
+
 ## 0.6.10 -- 13 Sep 2026 (#438: the m line checked, and k= accepted)
 
 ### Added

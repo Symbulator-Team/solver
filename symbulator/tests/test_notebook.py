@@ -191,7 +191,7 @@ def test_run_without_ipython_binds_the_result():
     res = run("ac", "omega=1000 rms nodraw into=res",
               "e1,1,0,10\nr1,1,2,100\nl1,2,3,0.1\nc1,3,0,1e-6", ns)
     assert res.domain == "ac" and ns["res"] is res
-    assert "p_r1" in res            # use_rms=True names the power p_, not ap_
+    assert "ap_r1" in res           # #441: the average power is ap_ in ac, RMS or not
 
 
 def test_run_single_variable_becomes_a_list():
