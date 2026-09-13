@@ -289,8 +289,14 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
                 s = _clean_noise(sp.simplify(s))
                 out[f"s_{e.name}"] = s
                 if e.kind in "ejr":
+                    # The real (average) power under both of its names,
+                    # whichever convention is in force (#439, Roberto,
+                    # 13 Sep 2026): the calculator named it `ap` with
+                    # peak phasors and `p` with RMS ones, so an Evaluate
+                    # of `pr1 + pe1` came back unevaluated with RMS off.
                     p = sp.simplify(sp.re(s))
-                    out[f"p_{e.name}" if use_rms else f"ap_{e.name}"] = p
+                    out[f"p_{e.name}"] = p
+                    out[f"ap_{e.name}"] = p
                     if e.kind in "ej":
                         z = _seen_impedance(vdiff, i)
                         if z is not None:
@@ -314,7 +320,9 @@ def _derived(elements, domain: str, solution: Dict[str, sp.Expr],
                     s = s / 2
                 s = _clean_noise(sp.simplify(s))
                 out[f"s_{e.name}"] = s
-                out[f"p_{e.name}" if use_rms else f"ap_{e.name}"] = sp.simplify(sp.re(s))
+                p = sp.simplify(sp.re(s))
+                out[f"p_{e.name}"] = p
+                out[f"ap_{e.name}"] = p
             else:
                 out[f"p_{e.name}"] = sp.simplify(vout * (-i))
     return out

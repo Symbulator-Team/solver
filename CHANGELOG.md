@@ -11,6 +11,11 @@
   spaces round the `=` are allowed.
 
 ### Changed
+- **In AC the real power answers to both of its names.** `p_<name>` and
+  `ap_<name>` are one answer, the real part of `s_<name>`, whatever the
+  convention; the calculator's naming -- `ap` with peak phasors, `p` with
+  RMS ones -- had left `pr1 + pe1` an unevaluated expression under the
+  default convention (#439, Roberto, 13 Sep 2026).
 - **The m line is checked before anything is stamped** (codes
   222-228). Both named elements must exist and be of one kind -- two
   inductors in henries or two impedances in ohms, never one of each,

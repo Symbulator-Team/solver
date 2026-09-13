@@ -540,7 +540,12 @@ def _allowed_namespace(reserve_imaginary: bool = True):
         "asin": sp.asin, "acos": sp.acos, "atan": sp.atan,
         "sinh": sp.sinh, "cosh": sp.cosh, "tanh": sp.tanh,
         "Abs": sp.Abs, "abs": sp.Abs, "re": sp.re, "im": sp.im,
-        "arg": sp.arg, "conjugate": sp.conjugate, "sign": sp.sign,
+        # #439: the real and imaginary parts under the spellings a
+        # reader reaches for -- re(se) is the real power, im(se) the
+        # reactive -- and conj beside conjugate (Roberto, 13 Sep 2026).
+        "Re": sp.re, "Im": sp.im, "real": sp.re, "imag": sp.im,
+        "arg": sp.arg, "conjugate": sp.conjugate, "conj": sp.conjugate,
+        "sign": sp.sign,
         "Heaviside": sp.Heaviside, "DiracDelta": sp.DiracDelta,
         "Min": sp.Min, "Max": sp.Max,
         # The `[...]` parallel-impedance shortcut expands to a literal
