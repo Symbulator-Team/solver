@@ -83,6 +83,13 @@ E_PORT_SAME_NODE      = 218   # #314: a port shorted on itself
 E_TERMS_TRANSFORMER   = 219   # #314: a transformer's three forms
 E_PORT_PAIR           = 220   # #314: node terms both bare or both pairs
 N_LOCAL_REFERENCE     = 221   # #322: an island behind a port, its own reference
+E_M_NO_SUCH_ELEMENT   = 222   # #438: an m names an element the circuit has not got
+E_M_MIXED_KINDS       = 223   # #438: both inductors, or both impedances
+E_M_NOT_REAL          = 224   # #438: henries: real and positive
+E_M_NOT_IMAGINARY     = 225   # #438: ohms: positive imaginary
+E_M_K_RANGE           = 226   # #438: 0 < k <= 1
+E_M_TOO_STRONG        = 227   # #438: M above sqrt(L1*L2)
+E_M_IMPEDANCE_DOMAIN  = 228   # #438: a pair in ohms couples in AC only
 
 # --- 3xx: engine.py ---------------------------------------------------
 E_NO_STAMPING_RULE    = 301
@@ -279,6 +286,36 @@ CATALOGUE = {
                         "Node(s) %{nodes} have no path to node 0 (they lie "
                         "behind a port or a coupling), so their voltages "
                         "are measured against %{ref}, taken as 0."),
+    # #438: the m line checked before anything is stamped.
+    E_M_NO_SUCH_ELEMENT: ("error",
+                          "Mutual inductance %{name} couples %{other}, "
+                          "which is not an element of this circuit."),
+    E_M_MIXED_KINDS: ("error",
+                      "Mutual inductance %{name} couples %{a} and %{b}, "
+                      "which are not the same kind of element. Couple "
+                      "two inductors given in henries, or two "
+                      "impedances given in ohms, never one of each."),
+    E_M_NOT_REAL: ("error",
+                   "Mutual inductance %{name} couples inductors given in "
+                   "henries, so %{which} must be a real positive number; "
+                   "it is %{value}."),
+    E_M_NOT_IMAGINARY: ("error",
+                        "Mutual inductance %{name} couples coils given as "
+                        "impedances, so %{which} must be a positive "
+                        "imaginary number such as 3j -- no resistive or "
+                        "capacitive part; it is %{value}."),
+    E_M_K_RANGE: ("error",
+                  "The coupling factor of %{name} must lie between 0 "
+                  "and 1; k = %{k}."),
+    E_M_TOO_STRONG: ("error",
+                     "The coupling of %{name}, %{value}, is stronger than "
+                     "the two coils allow: it must not exceed "
+                     "sqrt(L1*L2) = %{limit}, a coupling factor of 1."),
+    E_M_IMPEDANCE_DOMAIN: ("error",
+                           "Mutual inductance %{name} couples coils given "
+                           "as impedances, which is an AC description; "
+                           "for %{domain} analysis write the coils in "
+                           "henries and the coupling in henries."),
 
     # --- 3xx engine ---------------------------------------------------
     E_NO_STAMPING_RULE: ("error",

@@ -185,6 +185,14 @@ class Circuit:
         self.mutual_of: Dict[str, List[Tuple[str, sp.Expr]]] = {}
         for e in elements:
             if e.kind == "m":
+                # #438: a pair written as impedances is an AC
+                # description; DC would short nothing and TR/FD would
+                # silently drop the coupling (_stamp_r couples in AC
+                # only), so it is refused with the reason.
+                first = self._by_name.get(e.fields[0])
+                if first is not None and first.kind == "r" and self.domain != "ac":
+                    raise CircuitError(M.E_M_IMPEDANCE_DOMAIN, name=e.name,
+                                       domain=self.domain.upper())
                 l1, l2, m_val = e.fields[0], e.fields[1], self._value(e.fields[2])
                 if m_val != 0:
                     self.mutual_of.setdefault(l1, []).append((l2, m_val))

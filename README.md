@@ -62,7 +62,7 @@ separated by `:`, fields within an element by `,`. Node `0` is ground.
 | `e` | voltage source (indep. or dependent) | name,n1,n2,value |
 | `j` | current source (indep. or dependent) | name,n1,n2,value |
 | `o` | ideal op-amp (nullor) | name,n_plus,n_minus,n_out |
-| `m` | mutual inductance | name,Lname1,Lname2,M |
+| `m` | mutual inductance | name,Lname1,Lname2,M — or `k=0.5` for M as a coupling factor |
 | `s` | short circuit | name,n1,n2 |
 | `t` | ideal transformer | name,n1,n2,turns1,turns2 · name,n1,n2,[turns1,turns2] · name,[tl,bl],[tr,br],[turns1,turns2] |
 | `z,y,h,g,a,b` | two-port block | name,n1,n2 · name,[tl,bl],[tr,br] — either followed by an optional [p11,p12,p21,p22] |

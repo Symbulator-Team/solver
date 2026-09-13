@@ -454,8 +454,115 @@ def parse_circuit(desc: str, expand_si: bool = True,
             two_port_param_texts(element)   # validates; raises if malformed
         elements.append(element)
 
+    _validate_couplings(elements, expand=expand_si)
     _validate_topology(elements, references=references)
     return elements
+
+
+def _coupling_factor(field: str) -> Optional[str]:
+    """The k expression when a coupling is written `k=0.5` (#438),
+    else None. The letter is case-insensitive and spaces are allowed
+    round the `=`."""
+    text = field.strip()
+    if len(text) > 2 and text[0] in "kK" and text[1:].lstrip().startswith("="):
+        return text[1:].lstrip()[1:].strip()
+    return None
+
+
+def _numeric(field: str):
+    """A value field as a SymPy number, or None when it is symbolic or
+    unreadable -- the engine reports an unreadable value itself, with
+    the field's own message, so nothing is refused here on its account."""
+    import sympy as sp
+    from .si_prefix import safe_sympify, expand_value
+    try:
+        expr = safe_sympify(expand_value(field), reserve_imaginary=True)
+    except Exception:                                      # noqa: BLE001
+        return None
+    if getattr(expr, "free_symbols", None):
+        return None
+    try:
+        return sp.nsimplify(expr) if expr.is_Rational else sp.N(expr)
+    except Exception:                                      # noqa: BLE001
+        return None
+
+
+def _validate_couplings(elements: List[Element], expand: bool = True) -> None:
+    """The m line checked, and its `k=` form expanded (#438, Roberto,
+    13 Sep 2026).
+
+    Both named elements must exist and be of one kind: two inductors
+    in henries, or two coils written as impedances in ohms. A numeric
+    value is checked for that kind -- real and positive in henries,
+    positive imaginary in ohms -- for the two coils and the coupling
+    alike; a symbol passes. With everything numeric the coupling may
+    not exceed sqrt(L1*L2), which is a coupling factor of 1.
+
+    `m,l1,l2,k=0.5` gives the coupling as the factor k instead: the
+    field is rewritten here to k*sqrt(L1*L2) in henries, or to
+    j*k*sqrt(|Z1|*|Z2|) in ohms, so that nothing downstream ever sees
+    k. A numeric k must lie in (0, 1]. In echo mode (`expand` False)
+    the typed field is kept and nothing is checked, since those
+    elements are only ever written back to the reader."""
+    if not expand:
+        return
+    import sympy as sp
+    by_name = {el.name: el for el in elements}
+    for m in elements:
+        if m.kind != "m":
+            continue
+        coils = []
+        for other in m.fields[:2]:
+            el = by_name.get(other)
+            if el is None or el is m:
+                raise CircuitError(M.E_M_NO_SUCH_ELEMENT, name=m.name, other=other)
+            coils.append(el)
+        a, b = coils
+        if a.kind != b.kind or a.kind not in ("l", "r"):
+            raise CircuitError(M.E_M_MIXED_KINDS, name=m.name, a=a.name, b=b.name)
+        henries = a.kind == "l"
+
+        def check(which, field, zero_ok=False):
+            # A coupling of exactly 0 is "no coupling" and has always
+            # been accepted (the engine stamps nothing for it); a coil
+            # of 0 H is a wire and cannot be coupled.
+            val = _numeric(field)
+            if val is None:
+                return None
+            re_, im_ = sp.re(val), sp.im(val)
+            if henries:
+                if im_ != 0 or not (re_ > 0 or (zero_ok and re_ == 0)):
+                    raise CircuitError(M.E_M_NOT_REAL, name=m.name,
+                                       which=which, value=field.strip())
+                return re_
+            if re_ != 0 or not (im_ > 0 or (zero_ok and im_ == 0)):
+                raise CircuitError(M.E_M_NOT_IMAGINARY, name=m.name,
+                                   which=which, value=field.strip())
+            return im_
+
+        la = check(a.name, a.value)
+        lb = check(b.name, b.value)
+        kfield = _coupling_factor(m.fields[2])
+        if kfield is not None:
+            k = _numeric(kfield)
+            if k is not None and (sp.im(k) != 0 or not (0 < sp.re(k) <= 1)):
+                raise CircuitError(M.E_M_K_RANGE, name=m.name, k=kfield)
+            if henries:
+                expr = "(%s)*sqrt((%s)*(%s))" % (kfield, a.value, b.value)
+            else:
+                expr = "I*(%s)*sqrt(-(%s)*(%s))" % (kfield, a.value, b.value)
+            m.fields[2] = expr
+            if m.raw_fields:
+                m.raw_fields[2] = "k=" + kfield
+            continue
+        mv = check("the coupling", m.fields[2], zero_ok=True)
+        if la is not None and lb is not None and mv is not None:
+            limit = sp.sqrt(la * lb)
+            if mv > limit * (1 + sp.Rational(1, 10**9)):
+                shown = sp.N(limit, 6)
+                raise CircuitError(M.E_M_TOO_STRONG, name=m.name,
+                                   value=m.fields[2].strip(),
+                                   limit=(str(shown) + ("j" if not henries else "")))
 
 
 def _validate_port_forms(el: Element) -> None:
