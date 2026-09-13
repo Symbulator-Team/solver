@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.6.10 -- 13 Sep 2026 (#438: the m line checked, and k= accepted)
+
+### Added
+- **A coupling may be given as its factor**: `m,l1,l2,k=0.5` is
+  expanded at parse time to `k*sqrt(L1*L2)` for coils in henries and
+  to `j*k*sqrt(|Z1|*|Z2|)` for coils written as impedances in ohms, so
+  the engine never sees k. A numeric k must lie in (0, 1]; a symbolic
+  k gives a symbolic coupling. The letter is case-insensitive and
+  spaces round the `=` are allowed.
+
+### Changed
+- **In AC the real power answers to both of its names.** `p_<name>` and
+  `ap_<name>` are one answer, the real part of `s_<name>`, whatever the
+  convention; the calculator's naming -- `ap` with peak phasors, `p` with
+  RMS ones -- had left `pr1 + pe1` an unevaluated expression under the
+  default convention (#439, Roberto, 13 Sep 2026).
+- **The m line is checked before anything is stamped** (codes
+  222-228). Both named elements must exist and be of one kind -- two
+  inductors in henries or two impedances in ohms, never one of each,
+  which was accepted before and answered wrongly. A numeric value on
+  either coil or on the coupling must be real and positive in henries
+  and positive imaginary in ohms; a symbol passes. With everything
+  numeric the coupling may not exceed `sqrt(L1*L2)`, a coupling
+  factor of 1. And a pair written in ohms is coupled in AC only: in
+  TR and FD the coupling was silently dropped, since `r` couples
+  nothing outside AC.
+
 ## 0.6.9 -- 13 Sep 2026 (#430: the pf tool as version 8 has it)
 
 ### Changed
