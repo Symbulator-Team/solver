@@ -1068,3 +1068,26 @@ def test_the_drawing_returned_is_the_last_one_drawn(desc):
         assert all(p in body for p in pat), (
             "wire %r was recorded but is not in the returned drawing" %
             ((x1, y1, x2, y2),))
+
+
+def test_coupling_factor_is_captioned_as_k():
+    """#446: `m,l1,l2,k=0.65` is captioned `k = 0.65`, never `M = k=0.65`;
+    a coupling given as an inductance keeps its `M = ...` caption."""
+    import re
+    from symbulator.schematic import to_svg
+
+    def caption(desc):
+        """The text of the caption line that names the coupled coils."""
+        svg = to_svg(desc)
+        for chunk in re.findall(r"<text[^>]*>.*?</text>", svg, re.S):
+            flat = re.sub(r"<[^>]+>", "", chunk)
+            if "couples" in flat:
+                return re.sub(r"\s+", " ", flat).strip()
+        raise AssertionError("no coupling caption in the drawing")
+
+    by_k = caption("e,1,0,100:l1,1,0,10'm:m,l1,l2,k=0.65:l2,0,2,160'm:r,2,0,400")
+    assert by_k.startswith("k = 0.65"), by_k
+    assert "M" not in by_k and "k=" not in by_k, by_k
+    by_m = caption("e,1,0,100:l1,1,0,10'm:m,l1,l2,26'm:l2,0,2,160'm:r,2,0,400")
+    assert by_m.startswith("M") and "26" in by_m and "k" not in by_m, by_m
+
