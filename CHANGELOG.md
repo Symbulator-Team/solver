@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.13 -- 14 Sep 2026 (#450: a name with two digits and a letter)
+
+### Fixed
+- **An element named like `r20b` is accepted.** The implicit
+  multiplication that reads `2ir3` as `2*ir3` looked behind a number for
+  a letter only, so in `r20b` the match that `r` stopped at `2` started
+  again at `0`, and the element was refused with a message naming
+  `r20*b`, a name the reader never typed. The rule now refuses a digit
+  or a decimal point behind the number too. `r20a` had only ever escaped
+  because `20a` also reads as twenty atto. The same fix reaches a value:
+  `3*ir20b` no longer reads as `3*ir20*b`. Found writing Alexander &
+  Sadiku 7e's Example 3.7 for the Course.
+
 ## 0.6.12 -- 14 Sep 2026 (#446: a coupling given as k is captioned as k)
 
 ### Fixed

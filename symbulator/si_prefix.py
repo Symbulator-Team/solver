@@ -339,8 +339,12 @@ _BARE_UNIT_RE = re.compile(r"\d\.?\d*[kKMGTPmuµμnpfa](?![\w])")
 # either -- never a name meeting a bracket, which is a function call.
 # The number must not be part of a name. Without the lookbehind, `t2s(t)`
 # becomes `t2*s(t)` and the function disappears -- which broke t2s and s2t
-# themselves, the two names most likely to be typed here.
-_IMPLICIT_NUM = re.compile(r"(?<![A-Za-z_])(\.?\d+\.?\d*)(?=[A-Za-z_(])")
+# themselves, the two names most likely to be typed here. The lookbehind
+# refuses a digit too: with letters alone, the match that `r` stops at
+# `2` in `r20b` simply starts again at `0`, and the element was refused as
+# `r20*b` (AS7's Example 3.7, 14 Sep 2026). `r20a` only ever escaped
+# because `20a` also reads as twenty atto.
+_IMPLICIT_NUM = re.compile(r"(?<![A-Za-z_\d.])(\.?\d+\.?\d*)(?=[A-Za-z_(])")
 _IMPLICIT_PAREN = re.compile(r"(?<=\))(?=[\w(])")
 
 

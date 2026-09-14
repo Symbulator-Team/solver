@@ -152,6 +152,23 @@ def test_a_digit_inside_a_name_is_not_a_multiplication():
         assert expand_value(name) == name
 
 
+def test_two_digits_inside_a_name_are_not_a_multiplication():
+    """`r20b` must not become `r20*b`.
+
+    The lookbehind that fixed `t2s` refused a letter before the number
+    only, so the match `r` stopped at `2` started again at `0`, and the
+    element was refused with a message naming `r20*b` (Alexander &
+    Sadiku's Example 3.7, 14 Sep 2026). `r20a` escaped only because
+    `20a` also reads as twenty atto.
+    """
+    for text in ("r20b,1,0,20", "3*ir20b", "n10x", "v_r12c", "e10z,1,0,5"):
+        assert expand_value(text) == text
+    assert expand_value("20b") == "20*b"
+    assert expand_value("12.5x") == "12.5*x"
+    from symbulator import dc
+    assert dc("e,1,0,10:r20b,1,0,20").values["i_r20b"] == sp.Rational(1, 2)
+
+
 def test_the_multiplication_is_still_inserted_where_it_belongs():
     assert expand_value("2ir3") == "2*ir3"
     assert expand_value(".2v1") == ".2*v1"
