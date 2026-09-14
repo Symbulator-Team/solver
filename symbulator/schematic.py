@@ -66,7 +66,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from . import messages as M
-from .elements import Element, CircuitError, parse_circuit
+from .elements import Element, CircuitError, parse_circuit, _coupling_factor
 
 __all__ = ["to_svg", "draw"]
 
@@ -4310,8 +4310,22 @@ def _render_once(elements: List[Element], marks=None,
     for e in lay.mutuals:
         # `m`'s two fields are coupled *coils*, not nodes, so they are
         # element names and get the same treatment.
+        # A coupling typed as its factor, `m,l1,l2,k=0.65` (#438), is
+        # captioned as the factor, k = 0.65, the way the reader gave it
+        # and the book states it. Before #446 the raw field went through
+        # `_value_runs` whole and the caption read "M = k=0.65".
+        # The drawer parses in echo mode (`expand_si=False`), where the
+        # typed field is the element's value and `raw_fields` is empty.
+        typed = (e.raw_fields[2] if e.raw_fields and len(e.raw_fields) > 2
+                 else (e.value or ""))
+        kfield = _coupling_factor(typed)
+        if kfield is not None:
+            head = [("k", False, True), (" = " + kfield, False)]
+        else:
+            head = (_name_runs(e.name) + [(" = ", False)]
+                    + _value_runs(e, lay.refs))
         captions.append(
-            _name_runs(e.name) + [(" = ", False)] + _value_runs(e, lay.refs)
+            head
             + [("  (couples ", False)]
             + _name_runs(e.n1) + [(" and ", False)]
             + _name_runs(e.n2) + [(")", False)])

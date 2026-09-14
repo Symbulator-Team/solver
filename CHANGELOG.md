@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.12 -- 14 Sep 2026 (#446: a coupling given as k is captioned as k)
+
+### Fixed
+- **A drawing captions a coupling typed as its factor as that factor.**
+  `m,l1,l2,k=0.65` drew the caption *M = k=0.65 (couples L1 and L2)*:
+  the drawer parses in echo mode, where the typed field is the element's
+  value, and passed the whole `k=0.65` through as if it were an
+  inductance. It now reads *k = 0.65 (couples L1 and L2)*, the way the
+  reader wrote it and the book states it; a coupling given as an
+  inductance keeps its *M = ...* caption. Found by drawing Nilsson &
+  Riedel 12e's Problem 18.36 for the Course; Roberto's ruling of 14 Sep
+  2026 that with a k the *M =* is dropped. Drawing only -- no answer
+  changes.
+
 ## 0.6.11 -- 13 Sep 2026 (#441: the AC powers are p, q and s)
 
 ### Changed
