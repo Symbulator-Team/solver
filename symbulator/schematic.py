@@ -4149,9 +4149,24 @@ def _render_once(elements: List[Element], marks=None,
             # input pin where that node was lifted to meet it (#377).
             cv.wire(xa, lay.row_y(e.n1), xa, y)
             cv.wire(xb, lay.row_y(e.n2), xb, y)
-        _draw_element(cv, e, xa, y, xb, y, e.name in lay.controlled,
+        # The body sits in the widest stretch of its span that no higher
+        # branch's riser climbs through. Centred on the whole span, as it
+        # always was, it lands on any riser that happens to rise from the
+        # middle column: AS7's Example 10.4 put its 8 ohm across l-c
+        # exactly where the 6 ohm across t-r rises from t (#453). The
+        # crossing stays -- the node order makes it -- but it is a wire
+        # crossing a wire, not a wire through a symbol.
+        x1, x2 = xa, xb
+        if lvl:
+            x1, x2 = _clear_of_risers(lay, e, lvl, xa, xb)
+            lo, hi = min(x1, x2), max(x1, x2)
+            if lo > min(xa, xb):
+                cv.wire(min(xa, xb), y, lo, y)
+            if hi < max(xa, xb):
+                cv.wire(hi, y, max(xa, xb), y)
+        _draw_element(cv, e, x1, y, x2, y, e.name in lay.controlled,
                       e.name in lay.v_ref, e.name in lay.i_ref, lay.refs)
-        segs[e.name] = (xa, y, xb, y)
+        segs[e.name] = (x1, y, x2, y)
 
     # 2. elements with one terminal on ground, hanging down to the rail
     for e in lay.grounded:
@@ -4393,6 +4408,81 @@ def _rounded(x0: float, y0: float, x1: float, y1: float,
     ).format(x0 + r, y0, x1 - r, x1, r, y0 + r, cls, y1 - r, y1, x0)
 
 
+#: {mesh name: True when its arrow is drawn turning clockwise}, as the
+#: last drawing with by-hand marks left it. Written by `_byhand_marks`,
+#: read by `mesh_turning` (#451). The drawer may draw a circuit several
+#: ways before keeping one, and the kept one is always drawn last, so
+#: what is left here is the drawing the reader sees.
+_MESH_TURNING: Dict[str, bool] = {}
+
+
+def mesh_turning(desc: str, marks) -> Dict[str, bool]:
+    """Which way each mesh of a by-hand run turns in the drawing.
+
+    `marks` is `byhand.mesh(...).marks`. Returns {"I1": True, ...}, True
+    for a mesh whose walk turns clockwise on the page -- the sense the
+    drawing's own arrow shows. A mesh the drawing cannot place is left
+    out. Textbooks draw mesh currents clockwise, and the app turns every
+    mesh that way before it shows the system (#451, Roberto, 15 Sep
+    2026)."""
+    _MESH_TURNING.clear()
+    to_svg(desc, marks=marks)
+    return dict(_MESH_TURNING)
+
+
+def _clear_of_risers(lay: "_Layout", e: Element, lvl: int,
+                     xa: float, xb: float) -> Tuple[float, float]:
+    """The stretch of a lifted two-terminal branch's span to draw its body
+    on, n1 end first. The whole span, as always, unless a riser of a
+    branch lifted higher climbs through where the centred body would be
+    drawn; then the widest stretch between those risers, provided it
+    still holds the body with a lead each side (#453).
+
+    Only a riser through the body moves it. A riser that crosses a lead
+    is an ordinary hop and was always drawn that way -- Bo2's Example
+    3.3 and two of the monograph's exemplars have one -- so those
+    drawings stay exactly as they were."""
+    if e.kind == "s":
+        return xa, xb                # a short has no body to move
+    lo, hi = min(xa, xb), max(xa, xb)
+    cuts = []
+    for other in lay.spanning:
+        if other is e or lay.level.get(other.name, 0) <= lvl:
+            continue
+        if other.kind == "t" or other.kind in PORT_BLOCK:
+            continue
+        for node in (other.n1, other.n2):
+            col = lay.node_col.get(node)
+            if col is None:
+                continue
+            x = lay.px(col)
+            if lo + 0.5 < x < hi - 0.5:
+                cuts.append(x)
+    body = (2 * (DEP_ALONG if e.name in lay.controlled else SRC_R)
+            if e.kind in ("e", "j") else BODY)
+    mid = (lo + hi) / 2.0
+    if not any(abs(x - mid) < body / 2.0 + GAP for x in cuts):
+        return xa, xb
+    edges = sorted(set([lo, hi] + cuts))
+    width, a, b = max((q - p, p, q) for p, q in zip(edges, edges[1:]))
+    # An end at a riser would meet it: a wire ending on a line reads as a
+    # T, and the drawer rings every T with a junction dot. So a stretch
+    # bounded by a riser stops short of it, and the plain wire beyond
+    # runs through the crossing instead of ending on it.
+    if a > lo:
+        a += CROSS_CLEAR
+    if b < hi:
+        b -= CROSS_CLEAR
+    need = body + 2 * LEAD_MIN
+    if b - a < need:
+        return xa, xb
+    return (a, b) if xa <= xb else (b, a)
+
+
+#: How far a lifted body's lead stops short of a riser it avoids (#453).
+CROSS_CLEAR = 12.0
+
+
 def _byhand_marks(cv: _Canvas, lay: "_Layout",
                   segs: Dict[str, Tuple[float, float, float, float]],
                   y_top: float, marks) -> None:
@@ -4487,11 +4577,24 @@ def _byhand_marks(cv: _Canvas, lay: "_Layout",
         cx = sum(p[0] for p in points) / len(points)
         cy = sum(p[1] for p in points) / len(points)
 
+        # The sense is read from each element's ends in the direction the
+        # walk takes it -- `segs` holds them n1 end first -- not from the
+        # midpoints: two elements in parallel have midpoints on one
+        # vertical, a polygon of no area, and read as counterclockwise
+        # whichever way they were walked (#451).
+        chain = []
+        for element, sign in walk:
+            seg = segs.get(element)
+            if seg is None:
+                continue
+            ends = [(seg[0], seg[1]), (seg[2], seg[3])]
+            chain.extend(ends if sign > 0 else ends[::-1])
         area = 0.0
-        for i, (px, py) in enumerate(points):
-            qx, qy = points[(i + 1) % len(points)]
+        for i, (px, py) in enumerate(chain):
+            qx, qy = chain[(i + 1) % len(chain)]
             area += px * qy - qx * py
         clockwise = area > 0
+        _MESH_TURNING[name] = clockwise
 
         reach = min(math.hypot(px - cx, py - cy) for px, py in points)
         r = max(13.0, min(30.0, reach * 0.45))

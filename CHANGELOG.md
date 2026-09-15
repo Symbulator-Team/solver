@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.6.14 -- 15 Sep 2026 (#451: mesh currents turn clockwise, and can be flipped)
+
+### Added
+- **`schematic.mesh_turning(desc, marks)`** reports which way each mesh of a
+  by-hand run turns in the drawing, and **`byhand.reverse_meshes(system,
+  names)`** turns the named meshes the other way: every written line and
+  bridge line takes `Ik -> -Ik`, the loop is walked backwards, and every
+  answer but the reversed mesh currents is unchanged. The app uses the two
+  to turn every mesh clockwise, as textbooks draw them, and to flip them
+  all at the reader's request (Roberto, 15 Sep 2026).
+
+### Fixed
+- **A mesh's arrow runs the way its equations do.** `_orient` turned a
+  mesh by negating its signs and kept its order, and the drawing reads an
+  arrow's sense from the order, so a turned mesh could be written one way
+  and drawn the other. It is now walked backwards. The sense is also read
+  from each element's ends along the walk rather than from the midpoints,
+  which gave a loop of two parallel elements no area at all. Found on
+  Alexander & Sadiku 7e's Example 3.7, whose second mesh was drawn
+  clockwise and written counterclockwise.
+- **A riser no longer climbs through a lifted body (#453).** A branch
+  lifted over a node drew its body centred on its span, so a riser of a
+  branch lifted higher could rise straight through the symbol: Alexander &
+  Sadiku 7e's Example 10.4 put its 8 ohm across l-c exactly where the 6 ohm
+  across t-r rises from t. The body now sits in the widest stretch clear of
+  such risers, stopping short of them so the crossing is a hop and not a
+  junction. Only a riser through the body moves it; a riser crossing a
+  lead was always a hop and stays one. One drawing of the 459 in the
+  example books moves, that one, and no monograph exemplar does.
+
 ## 0.6.13 -- 14 Sep 2026 (#450: a name with two digits and a letter)
 
 ### Fixed

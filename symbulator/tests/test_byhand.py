@@ -325,3 +325,65 @@ def test_a_method_that_is_not_offered_is_named_as_such():
     said = byhand.shorter_route(byhand.nodal(els, "dc"),
                                 byhand.mesh(els, "dc"))
     assert said["code"] == M.N_BH_NO_MESH_HERE
+
+
+# ------------------------------------------ mesh directions (#451) --------
+
+#: AS7's Example 3.7: four meshes, two supermeshes, a two-element loop.
+AS7_37 = ("r6,0,p,6:j1,p,x,5:r2a,p,x,2:j2,x,0,-3*ie:r4,x,y,4:"
+          "r8,y,0,8:r2b,y,z,2:e,z,0,10")
+
+
+def _traced(walk, elements):
+    """True when a loop's order IS its traversal: each element starts
+    where the one before it ended."""
+    by = {e.name: e for e in elements}
+    ends = []
+    for name, sign in walk:
+        e = by[name]
+        ends.append((e.n1, e.n2) if sign > 0 else (e.n2, e.n1))
+    return all(ends[i][1] == ends[(i + 1) % len(ends)][0]
+               for i in range(len(ends)))
+
+
+def test_a_turned_mesh_is_walked_backwards_not_just_resigned():
+    """`_orient` negated a turned mesh's signs and kept its order, so the
+    order no longer traced the loop and the drawing's arrow, read from
+    the order, ran against the equations (AS7's Example 3.7)."""
+    elements = parse_circuit(AS7_37)
+    system = byhand.mesh(elements, "dc")
+    for name, walk in system.loops.items():
+        assert _traced(walk, elements), (name, walk)
+
+
+def test_reversing_a_mesh_negates_its_current_and_nothing_else():
+    elements = parse_circuit(AS7_37)
+    system = byhand.mesh(elements, "dc")
+    before = byhand.solve(system)
+    turned = byhand.reverse_meshes(system, ["I2"])
+    after = byhand.solve(turned)
+    for u in system.unknowns:
+        want = -before[u] if str(u) == "I2" else before[u]
+        assert sp.simplify(after[u] - want) == 0, u
+    assert _traced(turned.loops["I2"], elements)
+    assert byhand.compare(turned, dc(AS7_37).values).verdict == "agrees"
+
+
+def test_the_drawing_reports_every_mesh_turning_and_clockwise_is_the_books():
+    """Every mesh turned clockwise by what the drawing reports gives the
+    book's printed mesh currents, -7.5, -2.5, 3.929 and 2.143 A -- the
+    two-element loop included, whose midpoints alone have no area."""
+    from symbulator.schematic import mesh_turning
+    elements = parse_circuit(AS7_37)
+    system = byhand.mesh(elements, "dc")
+    turning = mesh_turning(AS7_37, system.marks)
+    assert set(turning) == {"I1", "I2", "I3", "I4"}
+    clockwise = byhand.reverse_meshes(
+        system, [n for n, cw in turning.items() if not cw])
+    assert all(mesh_turning(AS7_37, clockwise.marks).values())
+    got = byhand.solve(clockwise)
+    values = {str(k): v for k, v in got.items()}
+    assert values["I1"] == sp.Rational(-15, 2)
+    assert values["I2"] == sp.Rational(-5, 2)
+    assert values["I3"] == sp.Rational(55, 14)
+    assert values["I4"] == sp.Rational(15, 7)
