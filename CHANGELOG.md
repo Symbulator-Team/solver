@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.15 -- 15 Sep 2026 (#459: a mesh arrow sits in the middle of its loop)
+
+### Fixed
+- **A mesh current's arrow sits in the middle of its loop.** It was placed at
+  the mean of its elements' midpoints, which leans away from any side of the
+  loop that is bare wire: AS7's Practice Problem 13.2 had its left arrow up
+  by the two top resistors (Roberto, 15 Sep 2026). The loop is now traced as
+  drawn -- its elements and the wires joining them, on a 4px grid -- and the
+  arrow goes to the point inside it farthest from every line, symbol, label
+  and earlier arrow, its circle sized to the room there. A by-hand mesh comes
+  from a cycle basis and may enclose several windows of the drawing, which is
+  why the loop's own path is traced rather than a window looked up.
+- The search runs once, on the returned picture: the layout is still settled
+  with the quick placement, so every drawing keeps its size and layout, and a
+  drawing with no marks is byte-identical to 0.6.14.
+
 ## 0.6.14 -- 15 Sep 2026 (#451: mesh currents turn clockwise, and can be flipped)
 
 ### Added

@@ -1133,3 +1133,38 @@ def test_a_riser_does_not_climb_through_a_lifted_body():
     now sits in the widest stretch clear of such risers, and only then:
     a riser crossing a mere lead is an ordinary hop and stays one."""
     assert _wires_through_bodies(AS7_104) == []
+
+
+AS7_P132 = "e,1,0,(100∠60°):r5,1,2,5:rl2,2,3,2j:m,rl2,rl6,3j:rl6,0,3,6j:rc,3,0,-4j"
+
+
+def _mesh_labels(desc, domain):
+    from symbulator import byhand
+    from symbulator.elements import parse_circuit
+    system = byhand.mesh(parse_circuit(desc), domain)
+    svg = to_svg(desc, marks=system.marks)
+    return [(float(x), float(y)) for x, y in
+            re.findall(r'class="mesh-lbl" x="([-\d.]+)" y="([-\d.]+)"', svg)]
+
+
+def test_a_mesh_arrow_sits_in_the_middle_of_its_loop():
+    """#459: an arrow sat at the mean of its elements' midpoints, which
+    leans away from a side of the loop that is bare wire -- AS7's Practice
+    Problem 13.2's left loop has two resistors on top and only a wire at
+    the bottom, and its arrow sat 34px higher than the right loop's, whose
+    two sides are both elements. Both loops span the same band, so their
+    arrows now sit at the same height."""
+    labels = _mesh_labels(AS7_P132, "ac")
+    assert len(labels) == 2
+    (_x1, y1), (_x2, y2) = labels
+    assert abs(y1 - y2) <= 6, labels
+
+
+def test_mesh_arrows_leave_the_plain_drawing_alone():
+    """#459 places the arrows on the finished picture; a drawing with no
+    marks is the drawing it always was."""
+    from symbulator import schematic
+    plain = to_svg(AS7_P132)
+    _mesh_labels(AS7_P132, "ac")
+    assert to_svg(AS7_P132) == plain
+    assert not schematic._MESH_QUICK and not schematic._MESH_SENSE_ONLY
