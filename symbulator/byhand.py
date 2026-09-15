@@ -654,7 +654,12 @@ def _orient(walks: List[List[Tuple[int, int]]]) -> List[List[Tuple[int, int]]]:
                     if b in fixed:
                         agree += 1 if fixed[b] == sign else -1
                 if agree > 0:               # same direction: flip it
-                    out[j] = [(b, -s) for b, s in out[j]]
+                    # Walked backwards, not just re-signed: the order is
+                    # the traversal, and the drawing reads the arrow's
+                    # sense from it. Negating the signs alone left a
+                    # mesh whose equations ran one way and whose arrow
+                    # was drawn the other (#451, AS7's Example 3.7).
+                    out[j] = [(b, -s) for b, s in reversed(out[j])]
                 settled.add(j)
                 queue.append(j)
         # A mesh sharing no branch with anything settled so far: start
@@ -930,6 +935,42 @@ def mesh(elements: List[Element], domain: str, omega=None,
     out.loops = {str(mesh_syms[k]): [(branches[b].name, s) for b, s in walk]
                  for k, walk in enumerate(walks)}
     return out
+
+
+def reverse_meshes(system: ByHand, names) -> ByHand:
+    """The same mesh system with the named meshes turning the other way.
+
+    Reversing a mesh is the substitution `Ik -> -Ik` in every written
+    line and every bridge line, and the loop walked backwards. The system
+    is the same system: every answer it solves to is unchanged except
+    the reversed mesh currents themselves, which change sign. Used to
+    turn every mesh clockwise, as textbooks draw them, and to flip them
+    all at the reader's request (#451).
+
+    A line whose left side comes out led by a minus sign is written with
+    both sides negated -- `-I1 + I2 = 5` as `I1 - I2 = -5` -- the way a
+    student would write it down."""
+    from dataclasses import replace
+
+    names = {str(n) for n in names}
+    if system.method != "mesh" or not system.supported or not names:
+        return system
+    swap = {u: -u for u in system.unknowns if str(u) in names}
+    if not swap:
+        return system
+
+    def turned(row):
+        lhs = row.eq.lhs.xreplace(swap)
+        rhs = row.eq.rhs.xreplace(swap)
+        if lhs != row.eq.lhs and lhs.could_extract_minus_sign():
+            lhs, rhs = -lhs, -rhs
+        return replace(row, eq=sp.Eq(lhs, rhs, evaluate=False))
+
+    loops = {name: ([(element, -sign) for element, sign in reversed(walk)]
+                    if name in names else list(walk))
+             for name, walk in system.loops.items()}
+    return replace(system, rows=[turned(r) for r in system.rows],
+                   bridge=[turned(r) for r in system.bridge], loops=loops)
 
 
 # --------------------------------------------------------------------

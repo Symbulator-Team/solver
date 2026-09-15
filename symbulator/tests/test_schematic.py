@@ -1091,3 +1091,45 @@ def test_coupling_factor_is_captioned_as_k():
     by_m = caption("e,1,0,100:l1,1,0,10'm:m,l1,l2,26'm:l2,0,2,160'm:r,2,0,400")
     assert by_m.startswith("M") and "26" in by_m and "k" not in by_m, by_m
 
+
+#: AS7's Example 10.4: r8 is lifted over t, and r6, lifted higher, rises
+#: from t -- straight through where r8's body was centred.
+AS7_104 = ("e,l,0,10:rc4,t,l,-4j:r8,l,c,8:j1,c,t,4:rl,c,r,5j:r6,t,r,6:"
+           "j2,0,r,3:rc2,c,0,-2j")
+
+
+def _wires_through_bodies(desc):
+    """[(element axis, wire)] where a vertical wire crosses a horizontal
+    element's body, read off the canvas the drawing was made from."""
+    seen = {}
+    original = schematic._Canvas._flush_wires
+
+    def spy(self):
+        seen["wires"], seen["esegs"] = list(self.wires), list(self.esegs)
+        return original(self)
+
+    schematic._Canvas._flush_wires = spy
+    try:
+        to_svg(desc)
+    finally:
+        schematic._Canvas._flush_wires = original
+    hits = []
+    for x1, y1, x2, y2, half in seen["esegs"]:
+        if half <= 0 or abs(y1 - y2) > 0.01:
+            continue
+        mid = (x1 + x2) / 2.0
+        for w in seen["wires"]:
+            wx1, wy1, wx2, wy2 = w[:4]
+            if abs(wx1 - wx2) > 0.01:
+                continue
+            if abs(wx1 - mid) < half and min(wy1, wy2) < y1 < max(wy1, wy2):
+                hits.append(((x1, y1, x2, y2), tuple(w[:4])))
+    return hits
+
+
+def test_a_riser_does_not_climb_through_a_lifted_body():
+    """#453: a lifted branch drew its body centred on its span, so a riser
+    of a branch lifted higher could rise straight through it. The body
+    now sits in the widest stretch clear of such risers, and only then:
+    a riser crossing a mere lead is an ordinary hop and stays one."""
+    assert _wires_through_bodies(AS7_104) == []
