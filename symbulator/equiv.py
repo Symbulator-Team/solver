@@ -101,6 +101,25 @@ class PortResult(dict):
                 rf"\begin{{bmatrix}}{body}\end{{bmatrix}}$")
 
 
+def _fd_inputs(desc, domain, equations, conditions):
+    """`{...}` in FD, as `fd()` reads it (#458).
+
+    The brackets are the calculator's shorthand for `t2s(...)`: a value
+    written in time, `{480u(t)}`, transformed on the way in. `fd()` has
+    always expanded them, in the description and in the extra equations
+    and conditions; the equivalents run their own solves through `_run`
+    and never did, so `th("e,1,0,{480u(t)}:...", "a", "0", "fd")` was
+    refused with "contains a set" where `fd()` on the same description
+    answered. Outside FD the inputs are returned untouched, and the
+    parser refuses brackets there as it always has."""
+    if domain != "fd":
+        return desc, equations, conditions
+    from .si_prefix import expand_time_domain_braces as unbrace
+    return (unbrace(desc),
+            [unbrace(str(x)) for x in equations] if equations else equations,
+            [unbrace(str(x)) for x in conditions] if conditions else conditions)
+
+
 _AWKWARD_NOTE = (
     "The short-circuit round could not be solved directly; the current was "
     "found as the limit of a vanishing resistance instead.")
@@ -169,6 +188,7 @@ def th(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
     Determine such a value with a plain solve first and put the number in
     the description."""
     n1, n2 = str(n1), str(n2)
+    desc, equations, conditions = _fd_inputs(desc, domain, equations, conditions)
 
     open_circuit = _run(desc, domain, omega=omega, params=params, references=[n2],
                         use_rms=use_rms, equations=equations,
@@ -226,6 +246,7 @@ def er(desc: str, n1: str, n2: str, domain: str = "dc", omega=None,
     has no independent sources of its own (use `th()` for active
     circuits)."""
     n1, n2 = str(n1), str(n2)
+    desc, equations, conditions = _fd_inputs(desc, domain, equations, conditions)
     test_name = "jtest"
     res = _run(f"{desc}:{test_name},{n2},{n1},1", domain, omega=omega, references=[n2],
                params=params, equations=equations, unknowns=unknowns,
@@ -278,6 +299,7 @@ def port(desc: str, n1: str, n2: str, kind: str, domain: str = "dc", omega=None,
     each for h/g -- matching the original's own choice of excitation
     per parameter type) and extracts each parameter by substituting the
     other port's test value to 0, exactly as the original does."""
+    desc, equations, conditions = _fd_inputs(desc, domain, equations, conditions)
     kind = kind.lower()
     if kind not in _PORT_KINDS:
         raise ValueError(f"Unknown two-port kind '{kind}'; must be one of {_PORT_KINDS}.")

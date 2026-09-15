@@ -187,3 +187,41 @@ def test_th_keeps_the_open_circuit_voltage_when_all_else_fails(monkeypatch):
     with pytest.raises(CircuitError) as caught:
         _equiv.th(OPAMP, "3", "0")
     assert "open-circuit voltage is" in str(caught.value)
+
+
+# --- #458: {...} time values in FD, as fd() reads them -----------------------
+
+NR12_136_S = "e,1,0,480/s:r1,1,2,20:l,2,0,0.002:r2,2,a,60"
+NR12_136_T = "e,1,0,{480u(t)}:r1,1,2,20:l,2,0,0.002:r2,2,a,60"
+
+
+def test_th_reads_a_bracketed_time_value_in_fd():
+    """#458: fd() expanded `{480u(t)}`; th() refused it with "contains a
+    set". The bracketed and the s-domain descriptions are one circuit."""
+    from symbulator import th
+    s, t = th(NR12_136_S, "a", "0", "fd"), th(NR12_136_T, "a", "0", "fd")
+    for got, want in ((t.vth, s.vth), (t.ino, s.ino), (t.z, s.z)):
+        assert sp.simplify(got - want) == 0
+    # a bare number in brackets is a step, the same value
+    assert sp.simplify(th(NR12_136_T.replace("{480u(t)}", "{480}"), "a", "0", "fd").vth
+                       - s.vth) == 0
+
+
+def test_er_and_port_read_bracketed_time_values_in_fd():
+    from symbulator import er, port
+    s = "e,1,0,5/s:r1,1,2,10:r2,2,0,20:l,2,3,1:r3,3,0,30"
+    t = s.replace("5/s", "{5u(t)}")
+    assert sp.simplify(er(t.replace("{5u(t)}", "{0}"), "1", "0", "fd")
+                       - er(s.replace("5/s", "0"), "1", "0", "fd")) == 0
+    for kind in ("z", "h"):
+        ps, pt = port(s, "1", "3", kind, "fd"), port(t, "1", "3", kind, "fd")
+        for ij in ("11", "12", "21", "22"):
+            assert sp.simplify(pt[ij] - ps[ij]) == 0
+
+
+def test_brackets_in_an_fd_condition_on_th():
+    from symbulator import th
+    want = th(NR12_136_S, "a", "0", "fd").vth
+    got = th(NR12_136_S.replace("480/s", "Vs"), "a", "0", "fd",
+             conditions=["Vs = {480u(t)}"]).vth
+    assert sp.simplify(got - want) == 0

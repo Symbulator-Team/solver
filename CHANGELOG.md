@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.16 -- 16 Sep 2026 (#458: th, er and port read `{...}` in FD)
+
+### Fixed
+- **`th()`, `er()` and `port()` read a value written in time in curly
+  brackets in FD**, as `fd()` always has: `th("e,1,0,{480u(t)}:...", "a",
+  "0", "fd")` returns the equivalent of `480/s` instead of refusing the
+  description with "contains a set". The extra equations and conditions are
+  expanded the same way. Outside FD the brackets are refused as before.
+  Found moving NR12's Example 13.6 to the bracketed form (Roberto, 15 Sep
+  2026).
+
 ## 0.6.15 -- 15 Sep 2026 (#459: a mesh arrow sits in the middle of its loop)
 
 ### Fixed
