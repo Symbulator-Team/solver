@@ -3533,29 +3533,41 @@ def _final(elements: List[Element], marks, choice) -> str:
     resistors was laid out on the same grid as a three-phase network.
     Measured over the 356 built-in drawings, the median one carried
     113px of air in its band and 95px in every column gap."""
-    base: dict = {}
-    full = _render_once(elements, marks, *choice, out=base)
-    budget = _collisions(base["cv"])
-    cost = _cost(full)
-    row_h = _tighten_band(elements, marks, choice)
-    gaps = _tighten_gaps(elements, marks, choice, row_h)
+    # #459: every pass that settles the layout places a mesh arrow the
+    # quick way, as it always has, so a drawing's size and layout are what
+    # they were; the loop's middle is searched for once, on the picture
+    # that is returned. The search is too slow to repeat on every trial.
+    global _MESH_QUICK
+    _MESH_QUICK = True
+    try:
+        base: dict = {}
+        full = _render_once(elements, marks, *choice, out=base)
+        budget = _collisions(base["cv"])
+        cost = _cost(full)
+        row_h = _tighten_band(elements, marks, choice)
+        gaps = _tighten_gaps(elements, marks, choice, row_h)
+        chosen = (None, None)
 
-    # Both relaxations, then each alone, then neither. The band and the
-    # gaps are checked *together* because they interact: closing the
-    # band moves every body and its labels up, which is how `iCO` came
-    # to sit on `8∠-40°` in AS7's Example 10.13 with the gaps left
-    # untouched. A tightening that is checked only in the dimension it
-    # moves is not checked.
-    for try_h, try_g in ((row_h, gaps), (row_h, None), (None, gaps)):
-        if try_h is None and try_g is None:
-            continue
-        probe: dict = {}
-        svg = _render_once(elements, marks, *choice,
-                           row_h=try_h, gaps=try_g, out=probe)
-        h, sf = _collisions(probe["cv"])
-        if _cost(svg) == cost and h <= budget[0] and sf <= budget[1]:
-            return svg
-    return _render_once(elements, marks, *choice)
+        # Both relaxations, then each alone, then neither. The band and the
+        # gaps are checked *together* because they interact: closing the
+        # band moves every body and its labels up, which is how `iCO` came
+        # to sit on `8∠-40°` in AS7's Example 10.13 with the gaps left
+        # untouched. A tightening that is checked only in the dimension it
+        # moves is not checked.
+        for try_h, try_g in ((row_h, gaps), (row_h, None), (None, gaps)):
+            if try_h is None and try_g is None:
+                continue
+            probe: dict = {}
+            svg = _render_once(elements, marks, *choice,
+                               row_h=try_h, gaps=try_g, out=probe)
+            h, sf = _collisions(probe["cv"])
+            if _cost(svg) == cost and h <= budget[0] and sf <= budget[1]:
+                chosen = (try_h, try_g)
+                break
+    finally:
+        _MESH_QUICK = False
+    return _render_once(elements, marks, *choice,
+                        row_h=chosen[0], gaps=chosen[1])
 
 
 # The shortest bare lead the band will leave between a body (or its
@@ -4425,8 +4437,13 @@ def mesh_turning(desc: str, marks) -> Dict[str, bool]:
     out. Textbooks draw mesh currents clockwise, and the app turns every
     mesh that way before it shows the system (#451, Roberto, 15 Sep
     2026)."""
+    global _MESH_SENSE_ONLY
     _MESH_TURNING.clear()
-    to_svg(desc, marks=marks)
+    _MESH_SENSE_ONLY = True          # #459: the sense needs no arrow placement
+    try:
+        to_svg(desc, marks=marks)
+    finally:
+        _MESH_SENSE_ONLY = False
     return dict(_MESH_TURNING)
 
 
@@ -4481,6 +4498,184 @@ def _clear_of_risers(lay: "_Layout", e: Element, lvl: int,
 
 #: How far a lifted body's lead stops short of a riser it avoids (#453).
 CROSS_CLEAR = 12.0
+
+
+MESH_GRID = 4.0      # px per cell when #459 looks inside a mesh's loop
+MESH_REACH = 40.0    # margin kept round a loop's extent when it is laid on the grid
+_MESH_SPOTS: Dict[tuple, Optional[Tuple[float, float, float]]] = {}
+_MESH_SENSE_ONLY = False
+_MESH_QUICK = False      # set while the drawer is still settling its layout
+
+
+def _mesh_spot(cv: "_Canvas", walk, segs, placed=()):
+    """Where a mesh current's arrow belongs: (x, y, room), or None.
+
+    #459 (Roberto, 15 Sep 2026: *"Let's get those mesh circles nice and
+    centered"*). The arrow used to sit at the mean of its elements'
+    midpoints, which leans away from any side of the loop that is bare
+    wire -- AS7's Practice Problem 13.2 had its left arrow up by the two
+    top resistors. Two cheaper fixes were tried and failed: the middle of
+    the loop's extent lands on a symbol in a narrow mesh, and the window
+    of the drawing the loop's elements border is the wrong question,
+    because a by-hand mesh comes from a cycle basis and one loop may
+    enclose several windows (RM3's Figure 7-16 walks R2, R3 and R1).
+
+    So the loop is traced as drawn. On a grid of `MESH_GRID` px, every
+    wire and element axis is a line; the loop's own path is its elements
+    and, between each and the next, the shortest run along those lines
+    from where one ends to where the next begins. What that path encloses
+    is the loop's inside. Every cell there is given its distance to the
+    nearest line, symbol, label or arrow already `placed` ((x, y, r)
+    each), and the arrow goes to the farthest cell -- the middle of the
+    largest clear space inside the loop -- taking of two equally clear
+    cells the one nearer the inside's centre. Labels are left out of the
+    measure only when counting them leaves no room for a circle at all. `room` is
+    the distance found, so the caller sizes the circle to it. None when
+    the path cannot be traced or encloses nothing."""
+    own = []
+    for element, sign in walk:
+        seg = segs.get(element)
+        if seg is None:
+            return None                     # a loop not wholly drawn
+        start, end = (seg[0], seg[1]), (seg[2], seg[3])
+        own.append((start, end) if sign > 0 else (end, start))
+    if len(own) < 2:
+        return None
+    pts = [p for pair in own for p in pair]
+    x_lo = min(p[0] for p in pts) - MESH_REACH
+    y_lo = min(p[1] for p in pts) - MESH_REACH
+    x_hi = max(p[0] for p in pts) + MESH_REACH
+    y_hi = max(p[1] for p in pts) + MESH_REACH
+    lines = [l for l in [w[:4] for w in cv.wires] + [s[:4] for s in cv.esegs]
+             if l[2] >= x_lo and l[0] <= x_hi and l[3] >= y_lo and l[1] <= y_hi]
+    labels = [b for b in cv.labels
+              if b[2] >= x_lo and b[0] <= x_hi and b[3] >= y_lo and b[1] <= y_hi]
+    inks = [b for b in cv.inks
+            if b[2] >= x_lo and b[0] <= x_hi and b[3] >= y_lo and b[1] <= y_hi]
+    key = (tuple(sorted(lines)), tuple(sorted(labels)), tuple(sorted(inks)),
+           tuple(own), tuple(placed))
+    if key in _MESH_SPOTS:
+        return _MESH_SPOTS[key]
+    if len(_MESH_SPOTS) > 512:
+        _MESH_SPOTS.clear()
+
+    def remember(value):
+        _MESH_SPOTS[key] = value
+        return value
+
+    g = MESH_GRID
+    nx, ny = int((x_hi - x_lo) / g) + 1, int((y_hi - y_lo) / g) + 1
+    size = nx * ny
+
+    def cell(x, y):
+        return (min(nx - 1, max(0, int(round((x - x_lo) / g)))),
+                min(ny - 1, max(0, int(round((y - y_lo) / g)))))
+
+    def lay(grid, x0, y0, x1, y1, value=1):
+        (i0, j0), (i1, j1) = cell(x0, y0), cell(x1, y1)
+        for j in range(min(j0, j1), max(j0, j1) + 1):
+            row = j * nx
+            for i in range(min(i0, i1), max(i0, i1) + 1):
+                grid[row + i] = value
+
+    line = bytearray(size)
+    for l in lines:
+        lay(line, *l)
+
+    # the loop's path: its elements, and the runs of line joining them
+    path = bytearray(size)
+    for (sx, sy), (ex, ey) in own:
+        lay(path, min(sx, ex), min(sy, ey), max(sx, ex), max(sy, ey))
+    for n in range(len(own)):
+        (ax, ay) = own[n][1]
+        (bx, by) = own[(n + 1) % len(own)][0]
+        (ai, aj), (bi, bj) = cell(ax, ay), cell(bx, by)
+        src, dst = aj * nx + ai, bj * nx + bi
+        if src == dst:
+            continue
+        back = {src: -1}
+        queue, head = [src], 0
+        while head < len(queue) and dst not in back:
+            k = queue[head]
+            head += 1
+            i = k % nx
+            for kk in (k - 1 if i else -1, k + 1 if i < nx - 1 else -1,
+                       k - nx, k + nx):
+                if 0 <= kk < size and line[kk] and kk not in back:
+                    back[kk] = k
+                    queue.append(kk)
+        if dst not in back:
+            return remember(None)           # the two ends are not joined
+        k = dst
+        while k != -1:
+            path[k] = 1
+            k = back[k]
+
+    # outside is whatever the edge of the grid reaches without crossing
+    # the path; the rest, less the path itself, is the loop's inside
+    outside = bytearray(size)
+    stack = [k for k in range(size)
+             if (k < nx or k >= size - nx or k % nx in (0, nx - 1)) and not path[k]]
+    for k in stack:
+        outside[k] = 1
+    while stack:
+        k = stack.pop()
+        i = k % nx
+        for kk in (k - 1 if i else -1, k + 1 if i < nx - 1 else -1, k - nx, k + nx):
+            if 0 <= kk < size and not path[kk] and not outside[kk]:
+                outside[kk] = 1
+                stack.append(kk)
+    cells = [k for k in range(size) if not path[k] and not outside[k]]
+    if not cells:
+        return remember(None)
+
+    def farthest(with_labels):
+        blocked = bytearray(size)
+        for k in range(size):
+            if line[k] or path[k] or outside[k]:
+                blocked[k] = 1
+        for box in inks + (labels if with_labels else []):
+            lay(blocked, *box)
+        for px, py, pr in placed:
+            lay(blocked, px - pr - 8, py - pr - 8, px + pr + 8, py + pr + 8)
+        # every obstruction in the window seeds the distance, the loop's
+        # own path and the outside included
+        dist = [-1] * size
+        frontier = [k for k in range(size) if blocked[k]]
+        for k in frontier:
+            dist[k] = 0
+        if not frontier:
+            return None
+        level = 0
+        steps = (-nx - 1, -nx, -nx + 1, -1, 1, nx - 1, nx, nx + 1)
+        while frontier:
+            level += 1
+            nxt = []
+            for k in frontier:
+                for d in steps:
+                    kk = k + d
+                    if 0 <= kk < size and dist[kk] < 0 and not blocked[kk]:
+                        dist[kk] = level
+                        nxt.append(kk)
+            frontier = nxt
+        top = max(dist[k] for k in cells)
+        if top <= 0:
+            return None
+        cx = sum(k % nx for k in cells) / float(len(cells))
+        cy = sum(k // nx for k in cells) / float(len(cells))
+        pick = min((k for k in cells if dist[k] >= top - 1),
+                   key=lambda k: (k % nx - cx) ** 2 + (k // nx - cy) ** 2)
+        return (x_lo + (pick % nx) * g, y_lo + (pick // nx) * g, top * g)
+
+    # A smaller circle clear of the labels reads better than a larger one
+    # on top of them (Bo2's Example 6.1, AS7's Practice Problem 10.6), so
+    # the labels are ignored only when they leave no room at all.
+    spot = farthest(True)
+    if spot is None or spot[2] < 16.0:
+        bare = farthest(False)
+        if bare is not None and (spot is None or bare[2] > spot[2]):
+            spot = bare
+    return remember(spot)
 
 
 def _byhand_marks(cv: _Canvas, lay: "_Layout",
@@ -4565,6 +4760,7 @@ def _byhand_marks(cv: _Canvas, lay: "_Layout",
 
     # --- the mesh currents ---------------------------------------------
     centres = {}
+    placed: List[Tuple[float, float, float]] = []   # arrows drawn so far (#459)
     for name, walk in (marks.get("loops") or {}).items():
         points = []
         for element, _sign in walk:
@@ -4599,6 +4795,15 @@ def _byhand_marks(cv: _Canvas, lay: "_Layout",
         reach = min(math.hypot(px - cx, py - cy) for px, py in points)
         r = max(13.0, min(30.0, reach * 0.45))
 
+        # #459: the middle of the loop as drawn, when the drawing encloses
+        # one; the circle sized to the clear room there, the arrowhead's
+        # reach (7px) and a small margin kept inside it
+        spot = (None if _MESH_SENSE_ONLY or _MESH_QUICK
+                else _mesh_spot(cv, walk, segs, tuple(placed)))
+        if spot is not None:
+            cx, cy, room = spot
+            r = max(9.0, min(30.0, room - 8.0))
+
         # The centroid of a mesh's elements is usually the middle of the
         # loop, but on a thin mesh -- two elements nearly in line, a pair
         # in parallel -- it lands on a symbol, and a label over a
@@ -4617,7 +4822,7 @@ def _byhand_marks(cv: _Canvas, lay: "_Layout",
                     return False
             return True
 
-        if not clear(cx, cy):
+        if spot is None and not clear(cx, cy):
             best = None
             for step in (14.0, 24.0, 34.0):
                 for k in range(8):
@@ -4634,6 +4839,7 @@ def _byhand_marks(cv: _Canvas, lay: "_Layout",
                 r = max(12.0, min(r, 20.0))
 
         centres[name] = (cx, cy, r, points)
+        placed.append((cx, cy, r))
 
         span = 1.5 * math.pi                 # 270 degrees: a clear circulation
         t0 = -0.35 * math.pi
