@@ -279,10 +279,23 @@ def card_cells(e: dict, r: str) -> list:
     return out
 
 
+#: The first cell of every notebook here. On Google Colab the package is not
+#: installed, and a commented-out `pip` line -- what these opened with -- does
+#: nothing there, so the imports below failed on the first run. Installed only
+#: where Colab is, so a local session (which has it from `pip install
+#: symbulator[notebook]`) is left alone and nothing is downloaded twice.
+INSTALL_CELL = (
+    "# On Google Colab the package is not installed yet; install it there.\n"
+    "# A local Jupyter already has it: pip install symbulator[notebook]\n"
+    "import sys\n"
+    "if \"google.colab\" in sys.modules:\n"
+    "    %pip install -q symbulator matplotlib")
+
+
 def setup_cells() -> list:
-    """The install line and the imports every notebook here opens with."""
+    """The install cell and the imports every notebook here opens with."""
     return [
-        code("# !pip install symbulator matplotlib"),
+        code(INSTALL_CELL),
         code("import sympy as sp\nimport matplotlib.pyplot as plt\n"
              "from symbulator import (dc, ac, fd, tr, th, er, port, draw, "
              "polar,\n                        evaluate, solve, bode_samples, "
