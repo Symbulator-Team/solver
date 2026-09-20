@@ -279,6 +279,43 @@ def card_cells(e: dict, r: str) -> list:
     return out
 
 
+def setup_cells() -> list:
+    """The install line and the imports every notebook here opens with."""
+    return [
+        code("# !pip install symbulator matplotlib"),
+        code("import sympy as sp\nimport matplotlib.pyplot as plt\n"
+             "from symbulator import (dc, ac, fd, tr, th, er, port, draw, "
+             "polar,\n                        evaluate, solve, bode_samples, "
+             "time_samples, t, s)\nimport symbulator\n"
+             "symbulator.__version__"),
+    ]
+
+
+def execute_and_write(cells: list, stem: str) -> str:
+    """Run `cells` on this interpreter's kernel and write them, outputs
+    and all, to notebooks/books/<stem>.ipynb -- and only if every cell
+    ran. Returns the path."""
+    nb = new_notebook(cells=cells)
+    nb.metadata["kernelspec"] = {"name": "python3", "language": "python",
+                                 "display_name": "Python 3"}
+    nb.metadata["language_info"] = {"name": "python"}
+    # nbformat gives every cell a random id, so an unchanged notebook
+    # rebuilt came out different in every cell and git could not say what
+    # had really changed. Position is a stable id: a rebuild that changes
+    # nothing now changes nothing.
+    for n, cell in enumerate(nb.cells, 1):
+        cell["id"] = f"cell-{n:04d}"
+    NotebookClient(nb, timeout=900, kernel_name=KERNEL, allow_errors=False,
+                   resources={"metadata": {"path": ROOT}}).execute()
+    for cell in nb.cells:
+        if cell.cell_type == "code":
+            cell.metadata.pop("execution", None)
+    os.makedirs(OUT, exist_ok=True)
+    out = os.path.join(OUT, stem + ".ipynb")
+    nbformat.write(nb, out)
+    return out
+
+
 def build(stem: str) -> str:
     path = os.path.join(EXAMPLES, stem + ".cir")
     entries, _warnings, title = parse_book(open(path, encoding="utf-8").read())
@@ -289,28 +326,11 @@ def build(stem: str) -> str:
            "file, not retyped. The same entries open in the app at "
            "https://symbulator.pythonanywhere.com/\n\n"
            "If you are on Colab, run the first cell."),
-        code("# !pip install symbulator matplotlib"),
-        code("import sympy as sp\nimport matplotlib.pyplot as plt\n"
-             "from symbulator import (dc, ac, fd, tr, th, er, port, draw, "
-             "polar,\n                        evaluate, solve, bode_samples, "
-             "time_samples, t, s)\nimport symbulator\n"
-             "symbulator.__version__"),
-    ]
+    ] + setup_cells()
     for i, e in enumerate(entries, 1):
         cells += entry_cells(i, e)
-    nb = new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {"name": "python3", "language": "python",
-                                 "display_name": "Python 3"}
-    nb.metadata["language_info"] = {"name": "python"}
-    NotebookClient(nb, timeout=900, kernel_name=KERNEL, allow_errors=False,
-                   resources={"metadata": {"path": ROOT}}).execute()
-    for cell in nb.cells:
-        if cell.cell_type == "code":
-            cell.metadata.pop("execution", None)
-    os.makedirs(OUT, exist_ok=True)
-    out = os.path.join(OUT, stem + ".ipynb")
-    nbformat.write(nb, out)
-    return f"{stem}: {len(entries)} entries, {len(nb.cells)} cells, all executed"
+    execute_and_write(cells, stem)
+    return f"{stem}: {len(entries)} entries, {len(cells)} cells, all executed"
 
 
 def main() -> int:
