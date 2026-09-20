@@ -397,5 +397,5 @@ def tr(desc: str, params: Optional[dict] = None,
         except Exception:
             continue  # leave it out rather than fail the whole analysis
 
-    return Result(domain="tr", values=time_domain,
+    return Result(domain="tr", values=time_domain, desc=desc,
                   notes=list(s_domain.notes), references=dict(s_domain.references))

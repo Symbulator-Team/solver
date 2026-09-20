@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased (#466: evaluate() and solve(), the app's two cards)
+
+### Added
+- **`evaluate(result, "expression")` and `solve(result, equations,
+  unknowns)`** -- the app's Evaluate box and Solve card as package
+  functions, so a notebook can do what the calculator did with a solved
+  circuit's variables: `evaluate(res, "vo/vs")`, `evaluate(res, "vc",
+  conditions=["t = 2"])`, `solve(res, ["im(ze) = 0"], ["w"],
+  conditions=["w > 0"], real_only=True)`. Both return SymPy and read
+  answer names in every spelling (`i_r1`, `ir1`, `IR1`), with the same
+  shorthand a circuit value gets (`2'k`, `^`, `u(t)`, `{...}` in FD).
+  `evaluate` also answers `pf(...)`, `s2t(...)`/`t2s(...)` and
+  `limit(...)` with the answers substituted in first, takes a condition at
+  infinity as a limit, and on a `th()` result knows the load answers
+  `irl`, `vrl` and `prl` in the variable `load`. `solve` reads a pinning
+  condition (`R_3 = 10`) as a substitution and a comparison as a filter on
+  the roots, and `real_only=True` is the calculator's `solve()` against
+  its `cSolve()`. A `port()` result and a plain mapping of names to values
+  are accepted too, the latter being how `er()`'s single expression is
+  handed over. New module `symbulator/cards.py`; nothing else changes.
+- **`Result.desc`**, the circuit a result was solved from. It lets
+  `cards.py` derive an element's voltage drop from the two nodes it spans,
+  which in fd and tr is not among `values` -- the third level is computed
+  for dc and ac only -- so `vc` names an answer on the app's page while
+  the package had no such key.
+
 ## 0.6.16 -- 16 Sep 2026 (#458: th, er and port read `{...}` in FD)
 
 ### Fixed

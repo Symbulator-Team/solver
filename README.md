@@ -486,6 +486,58 @@ Options go on the magic's line -- `omega=1000`, `rms`,
 function. Multi-line descriptions are accepted everywhere, so a circuit
 copied from the tutorial pastes straight in.
 
+**The app's two cards, once a circuit is solved.** On the calculator the
+answers sat in the machine's variables and the next line could use them;
+the app gives that back as the Evaluate box and the Solve card, and
+`evaluate()` and `solve()` are the same two for a notebook. Both take
+the result of any analysis and return SymPy.
+
+```python
+from symbulator import dc, ac, fd, th, evaluate, solve
+
+res = dc("e1,1,0,vs:r1,1,2,1'k:r2,2,0,1'k")
+evaluate(res, "v2/vs")                       # 1/2
+evaluate(res, "v2", conditions=["vs = 10"])  # 5 -- the calculator's `|`
+solve(res, ["v2 = 6"], ["vs"])               # [{'vs': 12}]
+```
+
+Names match however they are spelled (`i_r1`, `ir1`, `IR1`), and
+everything a circuit value may use works here too (`2'k`, `^`, `u(t)`,
+`{...}` in FD). `evaluate()` also answers `pf(e)`, `s2t(vo)` and
+`limit(s*vo, s, 0)` -- each with the answers substituted in before the
+function is applied, which is the whole difficulty -- takes a condition
+at infinity as a limit (`conditions=["s = oo"]`, the initial-value
+theorem), and on a `th()` result knows the load answers `irl`, `vrl` and
+`prl` in the variable `load`:
+
+```python
+eq = th("e1,1,0,12:r1,1,2,4'k:r2,2,0,2'k", "2", "0")
+evaluate(eq, "prl", conditions=["load = 1000"])
+```
+
+`solve()` substitutes the answers first, so an equation may name `v2` or
+`ir1` directly, and solves for whatever is left; a condition that pins a
+symbol is applied before solving, a comparison filters the roots after,
+and `real_only=True` is the calculator's `solve()` against its `cSolve()`:
+
+```python
+# the resonant frequency: where the source sees no reactance
+res = ac("e,1,0,20:r,1,2,2:l,2,3,1'm:c,3,0,.4'u", "w")
+solve(res, ["im(ze) = 0"], ["w"], conditions=["w > 0"], real_only=True)
+# [{'w': 50000.0000000000}] -- 50 krad/s
+```
+
+It returns a list of solutions, each a dict, empty when there is none.
+`er()` returns one expression rather than a result, so hand it over
+under the name the card gives it:
+
+```python
+z = er("c,1,0,c:r1,1,2,10:l,2,0,5'm", "1", "0", domain="ac",
+       omega="2*pi*2e3")
+solve({"zeq": z}, ["im(zeq) = 0"], ["c"], real_only=True)
+# [{'c': 1.23522615159288e-6}]
+```
+
 **Plotting** is SymPy's `plot()` for a transient (with the package's
 own `t`, see the section above) and `bode_samples()` or
 `time_samples()` with Matplotlib for anything else. The repository's

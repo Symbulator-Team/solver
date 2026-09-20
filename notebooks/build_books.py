@@ -8,10 +8,10 @@ circuit drawn, and the run the entry describes, written as the package
 call a person would type: `dc`, `ac`, `fd`, `tr`, `th`, `er` or `port`,
 with the entry's Expert Mode lines, rounding and plot.
 
-What an entry asks of the app's Evaluate and Solve cards, its Define
-lines and the Thevenin tool's load question has no package call yet;
-such an entry gets its circuit run and a line saying what was left out,
-never an invented answer.
+What an entry asks of the app's Evaluate box and Solve card becomes the
+package's `evaluate()` and `solve()` on the run's result; a Define line
+becomes a condition; the Thevenin tool's load answers, `irl`, `vrl` and
+`prl`, are names `evaluate()` knows on a `th()` result.
 
 Run from the solver repo root, with nbformat, nbclient, ipykernel and
 matplotlib installed (`pip install symbulator[notebook] nbclient`):
@@ -76,12 +76,6 @@ def own_kernel() -> str:
 
 KERNEL = own_kernel()
 
-# The app's cards that have no package call yet, by the entry field that
-# fills them, and the card's name as the app shows it.
-APP_ONLY = (("evaluate", "Evaluate"), ("solve_equations", "Solve"),
-            ("defines", "Define"), ("with_load", "the load question"))
-
-
 # Entries whose chapter teaches them *as* a failure: the run is shown with
 # the message it gives. Named one by one -- any other entry that raises
 # stops the build, which is the point of executing the notebooks.
@@ -114,7 +108,11 @@ def extras(e: dict) -> list:
     `prepare_inputs`, and the notebook shows the underscored names the
     package's README asks for inside an expression."""
     eqs = ui._expand_and(as_list(e.get("equations")))
-    conds = ui._expand_and(as_list(e.get("conditions")))
+    # A Define line is the calculator's `Define x=3`: the name stands for
+    # its value everywhere. The package's form of that is a condition, the
+    # `|` operator, which substitutes through the whole system.
+    conds = (ui._expand_and(as_list(e.get("conditions")))
+             + as_list(e.get("defines")))
     unks = [u for line in as_list(e.get("unknowns"))
             for u in re.split(r"\s*,\s*", line) if u]
     _d, eqs, unks, conds, _ev, _n = ui.prepare_inputs(
@@ -245,12 +243,40 @@ def entry_cells(i: int, e: dict) -> list:
     plot = plot_cell(e, c)
     if plot:
         cells.append(code(plot))
-    left = [card for field, card in APP_ONLY if e.get(field)]
-    if left:
-        cells.append(md("*In the app this entry also uses "
-                        + " and ".join(left) + ", which this notebook "
-                        "does not reproduce yet.*"))
+    if e["name"] not in MEANT_TO_FAIL:
+        cells += [code(src) for src in card_cells(e, r)]
     return cells
+
+
+def answers_arg(e: dict, r: str) -> str:
+    """What evaluate() and solve() are handed: the run's result, or for
+    er(), which returns one expression, that expression under the name
+    the app's card gives it."""
+    if (e.get("tool") or "") == "er":
+        return "{%r: %s}" % ("req" if e["domain"] == "dc" else "zeq", r)
+    return r
+
+
+def card_cells(e: dict, r: str) -> list:
+    """The entry's Evaluate box and Solve card, as the package's calls."""
+    out = []
+    rms = ", use_rms=True" if e.get("rms") and e.get("tool") == "th" else ""
+    if e.get("evaluate"):
+        conds = as_list(e.get("evaluate_conditions"))
+        out.append(f"evaluate({answers_arg(e, r)}, {e['evaluate']!r}"
+                   + (f", conditions={conds!r}" if conds else "")
+                   + rms + ")")
+    if e.get("solve_equations"):
+        unks = [u for line in as_list(e.get("solve_unknowns"))
+                for u in re.split(r"\s*,\s*", line) if u]
+        conds = as_list(e.get("solve_conditions"))
+        out.append(f"solve({answers_arg(e, r)}, "
+                   f"{as_list(e['solve_equations'])!r}"
+                   + (f", {unks!r}" if unks else "")
+                   + (f", conditions={conds!r}" if conds else "")
+                   + (", real_only=True" if e.get("solve_real_only") else "")
+                   + rms + ")")
+    return out
 
 
 def build(stem: str) -> str:
@@ -266,8 +292,9 @@ def build(stem: str) -> str:
         code("# !pip install symbulator matplotlib"),
         code("import sympy as sp\nimport matplotlib.pyplot as plt\n"
              "from symbulator import (dc, ac, fd, tr, th, er, port, draw, "
-             "polar,\n                        bode_samples, time_samples, "
-             "t, s)\nimport symbulator\nsymbulator.__version__"),
+             "polar,\n                        evaluate, solve, bode_samples, "
+             "time_samples, t, s)\nimport symbulator\n"
+             "symbulator.__version__"),
     ]
     for i, e in enumerate(entries, 1):
         cells += entry_cells(i, e)

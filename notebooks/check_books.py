@@ -38,6 +38,7 @@ def app_payload(e: dict) -> dict:
         "equations": e.get("equations", []),
         "unknowns": e.get("unknowns", ""),
         "conditions": e.get("conditions", []),
+        "defines": e.get("defines", []),
         "variables": ([v.strip() for v in str(e.get("vars", "")).split(",")
                        if v.strip()] or None),
     }
@@ -96,6 +97,68 @@ def same(sp, a, b) -> bool:
     return True
 
 
+def app_card(client, e: dict, src: str, values: dict):
+    """The entry's Evaluate box or Solve card through the app's own route,
+    exact and without units: a string, or a list of {name: string}."""
+    defines = e.get("defines") or []
+    base = {"values": values, "domain": e.get("domain", "dc"),
+            "units": False,
+            "defines": defines if isinstance(defines, str)
+            else "\n".join(defines)}
+    if src.startswith("evaluate("):
+        got = client.post("/api/evaluate", json={
+            **base, "expr": e["evaluate"],
+            "conditions": e.get("evaluate_conditions", [])}).get_json()
+        if not got.get("ok"):
+            raise ValueError(f"the app's Evaluate refuses it: "
+                             f"{got.get('error')}")
+        return got["plain"]
+    got = client.post("/api/solveq", json={
+        **base, "equations": e["solve_equations"],
+        "unknowns": e.get("solve_unknowns", ""),
+        "conditions": e.get("solve_conditions", []),
+        "real_only": bool(e.get("solve_real_only"))}).get_json()
+    if not got.get("ok"):
+        raise ValueError(f"the app's Solve refuses it: {got.get('error')}")
+    return [{x["name"]: x["plain"] for x in sol}
+            for sol in got.get("solutions") or []]
+
+
+def damage(card):
+    if isinstance(card, str):
+        return f"({card}) + 1"
+    return [{k: f"({v}) + 1" for k, v in sol.items()} for sol in card] \
+        or [{"x": "1"}]
+
+
+def from_plain(text: str) -> str:
+    """The app's display text back as SymPy can read it: `5.0j` is 5.0*I."""
+    import re
+    text = re.sub(r"(?<![\w.])(\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)j(?![\w])",
+                  r"\1*I", text)
+    return text.replace("∞", "oo")
+
+
+def card_differs(sp, mine, theirs) -> str:
+    """'' when the notebook's card answer is the app's."""
+    if isinstance(theirs, str):
+        ok = same(sp, mine, from_plain(theirs))
+        return "" if ok else f"notebook {str(mine)[:50]}, app {theirs[:50]}"
+    if len(mine) != len(theirs):
+        return (f"notebook finds {len(mine)} solution(s), "
+                f"the app {len(theirs)}")
+    left = list(mine)
+    for sol in theirs:
+        for cand in left:
+            if set(cand) == set(sol) and all(
+                    same(sp, cand[k], from_plain(sol[k])) for k in sol):
+                left.remove(cand)
+                break
+        else:
+            return f"the app's solution {sol} is not among {mine}"
+    return ""
+
+
 def main() -> int:
     warnings.filterwarnings("ignore")
     import matplotlib
@@ -114,8 +177,8 @@ def main() -> int:
 
     ns: dict = {}
     exec("import sympy as sp\nfrom symbulator import (dc, ac, fd, tr, th, "
-         "er, port, polar, t, s)", ns)
-    entries_n = answers_n = 0
+         "er, port, polar, evaluate, solve, t, s)", ns)
+    entries_n = answers_n = cards_n = 0
     problems = []
     for path in sorted(glob.glob(os.path.join(bb.EXAMPLES, "*.cir"))):
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -164,12 +227,27 @@ def main() -> int:
                     problems.append(f"{where}: {k} differs -- notebook "
                                     f"{str(mine[k])[:60]}, app "
                                     f"{str(theirs[k])[:60]}")
+            # the entry's Evaluate box and Solve card, against the app's
+            # own two routes, fed the values its solve just returned
+            for src in bb.card_cells(e, "r"):
+                cards_n += 1
+                try:
+                    got_mine = eval(src, ns)
+                    got_app = app_card(client, e, src, got.get("values") or {})
+                    if prove_red:
+                        got_app = damage(got_app)
+                    why = card_differs(sp, got_mine, got_app)
+                except Exception as exc:                # noqa: BLE001
+                    why = f"{type(exc).__name__}: " \
+                          f"{str(exc).splitlines()[0][:100]}"
+                if why:
+                    problems.append(f"{where}: {src[:50]}... -- {why}")
         print(f"{stem}: {len(entries)} entries, "
               f"{len(problems) - before} problem(s)", flush=True)
     for p in problems:
         print("  **", p)
-    print(f"{entries_n} entries, {answers_n} answers compared, "
-          f"{len(problems)} problem(s)")
+    print(f"{entries_n} entries, {answers_n} answers and {cards_n} "
+          f"Evaluate/Solve cards compared, {len(problems)} problem(s)")
     if prove_red:
         print("prove-red:", "RED, as it should be" if problems
               else "STILL GREEN -- this check cannot fail")
