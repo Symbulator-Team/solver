@@ -39,6 +39,12 @@ class Result:
     notes: List[dict] = field(default_factory=list)
     # {reference node: the other nodes of its island}, for the same.
     references: Dict[str, List[str]] = field(default_factory=dict)
+    #: The circuit this solved, as it was written. Carried so a caller can
+    #: ask about the circuit and not only about the answers -- `cards.py`
+    #: derives an element's voltage drop from the nodes it spans, which in
+    #: fd and tr is not among `values` (see `_derived`). Never read by the
+    #: solve itself, and empty on a Result built by hand.
+    desc: str = ""
 
     def __post_init__(self):
         if not self.solutions:
@@ -116,7 +122,8 @@ class Result:
                       values={k: rnd(v) for k, v in self.values.items()},
                       solutions=[{k: rnd(v) for k, v in sol.items()}
                                  for sol in self.solutions],
-                      notes=list(self.notes), references=dict(self.references))
+                      notes=list(self.notes), references=dict(self.references),
+                      desc=self.desc)
 
     def _repr_latex_(self) -> str:
         """What a notebook shows for a bare `res`: every answer typeset,
@@ -165,7 +172,8 @@ class Result:
                       values={k: sub(v) for k, v in self.values.items()},
                       solutions=[{k: sub(v) for k, v in sol.items()}
                                  for sol in self.solutions],
-                      notes=list(self.notes), references=dict(self.references))
+                      notes=list(self.notes), references=dict(self.references),
+                      desc=self.desc)
 
     def __repr__(self) -> str:
         """One line per solved variable, sorted by name, so a Result
@@ -341,6 +349,14 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
     add the derived quantities where they apply, and wrap the result.
     Kept as one function so the three public entry points stay tiny and
     can't drift out of sync with each other."""
+    # `ac()` has always sympified its own omega, and the equivalents --
+    # th(), er(), port() -- never did, so a frequency written the way a
+    # book writes it, "2*pi*2e3", reached the stamping code as a str and
+    # failed there with "can't multiply sequence by non-int of type
+    # ImaginaryUnit", naming nothing the caller had typed. Done here, the
+    # one place all of them pass through.
+    if isinstance(omega, str):
+        omega = sp.sympify(omega)
     elements = parse_circuit(desc, references=references)
     solutions = solve_circuit_all(elements, domain=domain, omega=omega, params=params,
                                   equations=equations, unknowns=unknowns,
@@ -379,7 +395,7 @@ def _run(desc: str, domain: str, omega=None, params=None, use_rms: bool = False,
         for solution in solutions:
             solution.update(_derived(elements, domain, solution, use_rms=use_rms))
     return Result(domain=domain, values=solutions[0], solutions=solutions,
-                  notes=notes, references=refs)
+                  notes=notes, references=refs, desc=desc)
 
 
 def dc(desc: str, params: Optional[dict] = None, equations=None,

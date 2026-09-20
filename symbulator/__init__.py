@@ -45,6 +45,7 @@ from .dispatch import ex
 from .plotting import time_samples, bode_samples, PlotError
 from .schematic import to_svg, draw
 from .spice import to_spice, from_spice
+from .cards import evaluate, solve
 
 
 def load_ipython_extension(ipython):
@@ -57,10 +58,10 @@ def load_ipython_extension(ipython):
 
 #: The single source of truth for the version: pyproject.toml reads this
 #: attribute at build time, so the two cannot disagree.
-__version__ = "0.6.16+x50"
+__version__ = "0.6.17+x52"
 
 __all__ = ["dc", "ac", "fd", "tr", "t2s", "s2t", "t", "s", "pr", "pf", "gain", "th", "er", "port", "ex",
            "polar", "Phasor", "Result", "TheveninResult", "PortResult", "load_ipython_extension",
            "time_samples", "bode_samples", "PlotError",
-           "to_svg", "draw", "to_spice", "from_spice",
+           "to_svg", "draw", "to_spice", "from_spice", "evaluate", "solve",
            "AmbiguousValueError", "UnsafeExpressionError", "find_ambiguous_values", "__version__"]
