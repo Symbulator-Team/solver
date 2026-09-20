@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (#466: evaluate() and solve(), the app's two cards)
+## 0.6.17 -- 20 Sep 2026 (#466: evaluate() and solve(), the app's two cards)
 
 ### Added
 - **`evaluate(result, "expression")` and `solve(result, equations,
@@ -25,6 +25,18 @@
   which in fd and tr is not among `values` -- the third level is computed
   for dc and ac only -- so `vc` names an answer on the app's page while
   the package had no such key.
+- **Notebooks.** `notebooks/books/` holds one executed notebook per built-in
+  example book (the Course's problems, the two textbook samplers, the
+  Showcase and the monograph's exemplars), *A Baker's Dozen*, and the
+  Manual's circuits, each generated from the app's own files and compared
+  with the app answer by answer. Not part of the installed package.
+
+### Fixed
+- **`th()`, `er()` and `port()` accept a frequency written as a string**, as
+  `ac()` always has: `th(circuit, "2", "0", domain="ac", omega="2*pi*2e3")`
+  reached the stamping code as a `str` and failed there with *can't multiply
+  sequence by non-int of type ImaginaryUnit*, naming nothing the caller had
+  typed. The one place all of them pass through now sympifies it.
 
 ## 0.6.16 -- 16 Sep 2026 (#458: th, er and port read `{...}` in FD)
 

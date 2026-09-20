@@ -544,7 +544,10 @@ own `t`, see the section above) and `bode_samples()` or
 `notebooks/quickstart.ipynb` walks through all of this, and
 `notebooks/the_monograph.ipynb` runs the exemplar circuits of *The
 Internal Logic of Symbulator*; both are executed, and both open in
-Colab.
+Colab. `notebooks/books/` holds more: one notebook per built-in example
+book of the app (the tutorial's problems, the Alexander & Sadiku and
+Nilsson & Riedel samplers), *A Baker's Dozen*, and the Manual's circuits,
+each run with the package and compared with the app answer by answer.
 
 ## Expert mode: `ex()`
 
