@@ -40,7 +40,11 @@ if not os.path.exists(CIR):
 
 sys.path.insert(0, ROOT)
 sys.path.insert(0, SERVER)
+sys.path.insert(0, HERE)
 from circuitbook import parse_book                      # noqa: E402
+# the install cell and the kernel are build_books.py's, so that every notebook
+# here opens the same way and runs on the interpreter that built it
+import build_books as bb                                # noqa: E402
 
 entries, _, _ = parse_book(open(CIR, encoding="utf-8").read())
 BY_NAME = {e["name"]: e for e in entries}
@@ -71,7 +75,7 @@ The monograph [*The Internal Logic of Symbulator*](https://learn.symbulator.com/
 Each section gives the problem as the monograph poses it, draws the circuit, solves it, and reads the answer the text discusses. Run the cells in order; nothing here takes more than a few seconds.
 
 If you are on Colab, run the first cell."""),
-code("# !pip install symbulator matplotlib"),
+code(bb.INSTALL_CELL),
 code("""import sympy as sp
 from symbulator import dc, ac, fd, tr, th, draw, polar, bode_samples, t, s
 import symbulator
@@ -104,18 +108,18 @@ md("""## 2. One of each: the 2013 showcase
 
 """ + note("One of each: the 2013 showcase") + """
 
-This is Expert Mode: two equations about *power*, two unknowns that are the sources' own values, and two conditions that choose among the roots. Inside an equation the names are written the way the app writes them, `pjd1` for the power in `jd1`."""),
+This is Expert Mode: two equations about *power*, two unknowns that are the sources' own values, the symbols `vs` and `is` that the circuit's two independent sources are written with, and two conditions that choose among the roots. Inside an equation an answer is written the package's way, with its underscore: `p_jd1` for the power in `jd1`."""),
 code(circuit_cell("showcase", "One of each: the 2013 showcase")),
 code("""sc = dc(showcase,
-        unknowns=["es", "js"],
-        equations=["pjd1 = -80", "ped2 = 0"],
-        conditions=["es > 0", "js > 0"])
+        unknowns=["vs", "is"],
+        equations=["p_jd1 = -80", "p_ed2 = 0"],
+        conditions=["vs > 0", "is > 0"])
 sc.rounded(4)"""),
 md("The three answers the text names, and the current the constraint drove to zero:"),
-code("""sc.rounded(4)["es"], sc.rounded(4)["js"], sc["ir5"]"""),
+code("""sc.rounded(4)["vs"], sc.rounded(4)["is"], sc["ir5"]"""),
 md("Without the two conditions the system has more than one solution. `Result.solutions` holds all of them; `.values` is the first."),
-code("""every = dc(showcase, unknowns=["es", "js"], equations=["pjd1 = -80", "ped2 = 0"])
-len(every.solutions), [ (sp.N(sol["es"], 4), sp.N(sol["js"], 4)) for sol in every.solutions ]"""),
+code("""every = dc(showcase, unknowns=["vs", "is"], equations=["p_jd1 = -80", "p_ed2 = 0"])
+len(every.solutions), [ (sp.N(sol["vs"], 4), sp.N(sol["is"], 4)) for sol in every.solutions ]"""),
 
 # 3 ---------------------------------------------------------------
 md("""## 3. Prof. Boulet's switching transient
@@ -191,7 +195,9 @@ nb = new_notebook(cells=cells)
 nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3",
                              "language": "python"}
 nb.metadata["language_info"] = {"name": "python"}
-NotebookClient(nb, timeout=600, kernel_name="python3",
+for n, cell in enumerate(nb.cells, 1):      # stable ids: see build_books.py
+    cell["id"] = f"cell-{n:04d}"
+NotebookClient(nb, timeout=600, kernel_name=bb.KERNEL,
                allow_errors=False, resources={"metadata": {"path": ROOT}}).execute()
 for c in nb.cells:
     if c.cell_type == "code":
